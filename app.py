@@ -25,17 +25,33 @@ JAM_SLOTS = pd.date_range("07:00", "14:00", freq="30min").strftime("%H:%M").toli
 # =========================
 # UTILITAS
 # =========================
+def normalize_columns(df):
+    df.columns = (
+        df.columns
+        .str.upper()
+        .str.strip()
+        .str.replace("\n", " ", regex=False)
+    )
+    return df
+
+def detect_column(df, keywords):
+    for col in df.columns:
+        for kw in keywords:
+            if kw in col:
+                return col
+    return None
+
 def parse_jam(text):
-    if pd.isna(text) or text == "-" or str(text).strip() == "":
+    if pd.isna(text) or str(text).strip() in ["", "-"]:
         return []
 
     text = str(text).replace(".", ":")
     hasil = []
 
     for part in text.split(","):
-        match = re.findall(r"\d{2}:\d{2}", part)
-        if len(match) == 2:
-            start, end = match
+        jam = re.findall(r"\d{2}:\d{2}", part)
+        if len(jam) == 2:
+            start, end = jam
             slots = pd.date_range(start, end, freq="30min").strftime("%H:%M").tolist()
             hasil.extend(slots[:-1])
 
@@ -43,6 +59,15 @@ def parse_jam(text):
 
 def build_long_df(raw):
     rows = []
+
+    dokter_col = detect_column(raw, ["DOKTER"])
+    ksm_col = detect_column(raw, ["KSM"])
+    poli_col = detect_column(raw, ["POLI"])
+
+    if not dokter_col or not ksm_col or not poli_col:
+        st.error("❌ Kolom Dokter / KSM / POLI tidak terdeteksi di Excel.")
+        st.stop()
+
     for _, r in raw.iterrows():
         for hari in HARI_LIST:
             slots = parse_jam(r.get(hari, ""))
@@ -50,10 +75,11 @@ def build_long_df(raw):
                 rows.append({
                     "Hari": hari,
                     "Jam": s,
-                    "Dokter": r["NAMA DOKTER SPESIALIS/ SUB SPESIALIS"],
-                    "Poli": r["KSM"],
-                    "Jenis": r["POLI"]
+                    "Dokter": r[dokter_col],
+                    "Poli": r[ksm_col],
+                    "Jenis": r[poli_col]
                 })
+
     return pd.DataFrame(rows)
 
 def build_grid(df_hari):
@@ -119,19 +145,20 @@ def export_excel_landscape(df):
 @st.cache_data
 def load_data():
     try:
-        return pd.read_excel(FILE_EXCEL, sheet_name="Sheet1")
-    except:
+        df = pd.read_excel(FILE_EXCEL, sheet_name="Sheet1")
+        return normalize_columns(df)
+    except Exception as e:
+        st.error(f"❌ Gagal membaca Excel: {e}")
         return pd.DataFrame()
 
 raw_df = load_data()
 
 # =========================
-# HEADER TV MODE
+# HEADER MODE TV
 # =========================
 st.markdown("""
 <style>
-header {visibility: hidden;}
-footer {visibility: hidden;}
+header, footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -139,26 +166,25 @@ st.markdown("<h1 style='text-align:center'>📺 JADWAL DOKTER RAWAT JALAN</h1>",
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # =========================
-# VALIDASI DATA
+# VALIDASI
 # =========================
 if raw_df.empty:
-    st.error("❌ File Excel tidak ditemukan atau kosong.")
     st.stop()
 
 # =========================
-# PROSES DATA
+# PROSES
 # =========================
 df_long = build_long_df(raw_df)
 
 # =========================
-# TAMPILAN UTAMA (SEMUA HARI)
+# TAMPILAN SEMUA HARI
 # =========================
 tabs = st.tabs(HARI_LIST)
 
 for i, hari in enumerate(HARI_LIST):
     with tabs[i]:
         grid = build_grid(df_long[df_long["Hari"] == hari])
-        st.dataframe(grid, use_container_width=True, height=500)
+        st.dataframe(grid, use_container_width=True, height=520)
 
 # =========================
 # EXPORT
@@ -175,4 +201,4 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-st.success("File siap dicetak dan dibagikan.")
+st.success("File siap dicetak & dibagikan.")
