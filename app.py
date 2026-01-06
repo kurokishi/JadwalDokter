@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, time, timedelta
-import plotly.express as px
+from datetime import datetime, timedelta
 from openpyxl import Workbook
+import plotly.express as px
 import os
 
 # =========================================================
@@ -10,12 +10,11 @@ import os
 # =========================================================
 st.set_page_config(
     page_title="Jadwal Dokter",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-FILE_INPUT = "/mnt/data/jadwal hafis.xlsx"
-FILE_OUTPUT = "/mnt/data/jadwal coba.xlsx"
+FILE_INPUT = "jadwal hafis.xlsx"
+FILE_OUTPUT = "jadwal coba.xlsx"
 
 HARI_LIST = ["SENIN", "SELASA", "RABU", "KAMIS", "JUMAT", "SABTU"]
 
@@ -36,52 +35,60 @@ TIME_SLOTS = generate_time_slots()
 
 
 def parse_time_ranges(cell):
-    """
-    "08.30-09.30, 10.30-11.30" → ['08:30','09:00','09:30','10:30','11:00','11:30']
-    """
-    if pd.isna(cell) or cell == "-" or str(cell).strip() == "":
+    if pd.isna(cell):
         return []
 
-    cell = str(cell).replace(".", ":")
-    ranges = cell.split(",")
+    cell = str(cell).strip()
+    if cell == "-" or cell == "":
+        return []
+
+    cell = cell.replace(".", ":")
+    parts = cell.split(",")
 
     slots = []
-    for r in ranges:
-        start, end = r.strip().split("-")
-        t = datetime.strptime(start.strip(), "%H:%M")
-        end_t = datetime.strptime(end.strip(), "%H:%M")
-        while t < end_t:
-            slots.append(t.strftime("%H:%M"))
-            t += timedelta(minutes=30)
+    for p in parts:
+        try:
+            start, end = p.strip().split("-")
+            t = datetime.strptime(start.strip(), "%H:%M")
+            end_t = datetime.strptime(end.strip(), "%H:%M")
+            while t < end_t:
+                slots.append(t.strftime("%H:%M"))
+                t += timedelta(minutes=30)
+        except Exception:
+            continue
     return slots
 
 
 @st.cache_data
 def load_excel():
     if not os.path.exists(FILE_INPUT):
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["KSM", "Dokter", "Hari", "Jenis", "Slot"])
 
-    df = pd.read_excel(FILE_INPUT, sheet_name="Sheet1")
+    try:
+        raw = pd.read_excel(FILE_INPUT, sheet_name="Sheet1")
+    except Exception:
+        return pd.DataFrame(columns=["KSM", "Dokter", "Hari", "Jenis", "Slot"])
+
     records = []
 
-    for _, row in df.iterrows():
+    for _, row in raw.iterrows():
         ksm = row.iloc[0]
         dokter = row.iloc[1]
-        poli = row.iloc[2]
+        jenis = str(row.iloc[2]).upper()
 
         for hari in HARI_LIST:
-            if hari in row:
+            if hari in raw.columns:
                 slots = parse_time_ranges(row[hari])
                 for s in slots:
                     records.append({
                         "KSM": ksm,
                         "Dokter": dokter,
                         "Hari": hari,
-                        "Jenis": poli.upper(),
+                        "Jenis": jenis,
                         "Slot": s
                     })
 
-    return pd.DataFrame(records)
+    return pd.DataFrame(records, columns=["KSM", "Dokter", "Hari", "Jenis", "Slot"])
 
 
 def save_to_excel(df):
@@ -89,9 +96,7 @@ def save_to_excel(df):
     ws = wb.active
     ws.title = "Sheet1"
 
-    headers = ["KSM", "Dokter", "Hari", "Jenis", "Slot"]
-    ws.append(headers)
-
+    ws.append(df.columns.tolist())
     for _, r in df.iterrows():
         ws.append(list(r.values))
 
@@ -107,12 +112,28 @@ def color_slot(val):
 
 
 # =========================================================
-# LOAD DATA
+# LOAD DATA (SAFE)
 # =========================================================
 df = load_excel()
 
-st.title("📅 Aplikasi Penjadwalan Dokter")
-st.caption("Tampilan mirip Excel | Reguler & Eksekutif | Editable")
+REQUIRED_COLS = {"KSM", "Dokter", "Hari", "Jenis", "Slot"}
+
+if df.empty or not REQUIRED_COLS.issubset(df.columns):
+    st.error("""
+❌ Data tidak valid atau file Excel belum siap.
+
+Pastikan:
+- File **jadwal hafis.xlsx** ada di folder app
+- Sheet bernama **Sheet1**
+- Kolom hari: SENIN – SABTU
+""")
+    st.stop()
+
+# =========================================================
+# UI HEADER
+# =========================================================
+st.title("📅 Sistem Penjadwalan Dokter")
+st.caption("Tampilan Excel-like | Reguler & Eksekutif")
 
 # =========================================================
 # SIDEBAR FILTER
@@ -120,8 +141,8 @@ st.caption("Tampilan mirip Excel | Reguler & Eksekutif | Editable")
 st.sidebar.header("🔎 Filter")
 
 ksm_filter = st.sidebar.multiselect(
-    "Pilih KSM",
-    sorted(df["KSM"].unique()) if not df.empty else []
+    "KSM",
+    sorted(df["KSM"].dropna().unique())
 )
 
 hari_filter = st.sidebar.multiselect(
@@ -134,7 +155,7 @@ if st.sidebar.checkbox("Aktifkan Sabtu"):
     hari_filter.append("SABTU")
 
 jenis_filter = st.sidebar.multiselect(
-    "Jenis Layanan",
+    "Jenis",
     ["REGULER", "EKSEKUTIF"],
     default=["REGULER", "EKSEKUTIF"]
 )
@@ -142,7 +163,7 @@ jenis_filter = st.sidebar.multiselect(
 dokter_search = st.sidebar.text_input("Cari Dokter")
 
 # =========================================================
-# FILTER DATA
+# FILTER DATA (SAFE)
 # =========================================================
 filtered = df.copy()
 
@@ -156,35 +177,38 @@ filtered = filtered[
 
 if dokter_search:
     filtered = filtered[
-        filtered["Dokter"].str.contains(dokter_search, case=False)
+        filtered["Dokter"].str.contains(dokter_search, case=False, na=False)
     ]
 
 # =========================================================
-# DASHBOARD OVERVIEW
+# DASHBOARD
 # =========================================================
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Jumlah Dokter Aktif", filtered["Dokter"].nunique())
-col2.metric("Total Slot", len(filtered))
-col3.metric("Hari Aktif", filtered["Hari"].nunique())
+c1, c2, c3 = st.columns(3)
+c1.metric("Dokter Aktif", filtered["Dokter"].nunique())
+c2.metric("Total Slot", len(filtered))
+c3.metric("Hari Aktif", filtered["Hari"].nunique())
 
 chart = filtered.groupby("Hari").size().reset_index(name="Slot")
-fig = px.bar(chart, x="Hari", y="Slot", title="Ketersediaan Slot per Hari")
+fig = px.bar(chart, x="Hari", y="Slot", title="Distribusi Slot per Hari")
 st.plotly_chart(fig, use_container_width=True)
 
 # =========================================================
-# GRID EXCEL-LIKE VIEW
+# EXCEL-LIKE GRID
 # =========================================================
-st.subheader("📊 Tampilan Jadwal (Excel-like)")
+st.subheader("📊 Jadwal (Grid Waktu)")
 
 if not filtered.empty:
-    pivot = pd.DataFrame(index=filtered["Dokter"].unique(), columns=TIME_SLOTS)
+    pivot = pd.DataFrame(
+        index=sorted(filtered["Dokter"].unique()),
+        columns=TIME_SLOTS
+    )
 
     for _, r in filtered.iterrows():
-        pivot.loc[r["Dokter"], r["Slot"]] = "R" if r["Jenis"] == "REGULER" else "E"
+        pivot.loc[r["Dokter"], r["Slot"]] = (
+            "R" if r["Jenis"] == "REGULER" else "E"
+        )
 
     pivot = pivot.fillna("")
-
     st.dataframe(
         pivot.style.applymap(color_slot),
         use_container_width=True,
@@ -197,11 +221,10 @@ else:
 # EDIT MODE
 # =========================================================
 st.divider()
-st.subheader("✏️ Edit / Tambah Jadwal")
+st.subheader("✏️ Tambah / Edit Jadwal")
 
 with st.form("edit_form"):
     col1, col2, col3 = st.columns(3)
-
     ksm = col1.text_input("KSM")
     dokter = col2.text_input("Nama Dokter")
     hari = col3.selectbox("Hari", HARI_LIST)
@@ -210,9 +233,9 @@ with st.form("edit_form"):
     jenis = col4.selectbox("Jenis", ["REGULER", "EKSEKUTIF"])
     slots = col5.multiselect("Slot Waktu", TIME_SLOTS)
 
-    submitted = st.form_submit_button("➕ Tambahkan Jadwal")
+    submit = st.form_submit_button("➕ Tambahkan")
 
-    if submitted:
+    if submit:
         if jenis == "EKSEKUTIF":
             for s in slots:
                 count = df[
@@ -221,23 +244,23 @@ with st.form("edit_form"):
                     (df["Jenis"] == "EKSEKUTIF")
                 ].shape[0]
                 if count >= 7:
-                    st.warning(f"Slot {s} di {hari} sudah penuh (maks 7 Eksekutif)")
+                    st.warning(f"Slot {s} hari {hari} sudah penuh (maks 7)")
                     st.stop()
 
         for s in slots:
             df.loc[len(df)] = [ksm, dokter, hari, jenis, s]
 
-        st.success("Jadwal berhasil ditambahkan!")
+        st.success("Jadwal berhasil ditambahkan")
 
 # =========================================================
-# ACTION BUTTONS
+# ACTIONS
 # =========================================================
-col1, col2 = st.columns(2)
+c1, c2 = st.columns(2)
 
-if col1.button("💾 Simpan ke Excel"):
+if c1.button("💾 Simpan ke Excel"):
     save_to_excel(df)
-    st.success(f"Data tersimpan ke {FILE_OUTPUT}")
+    st.success("Data berhasil disimpan ke jadwal coba.xlsx")
 
-if col2.button("🔄 Refresh Data"):
+if c2.button("🔄 Refresh"):
     st.cache_data.clear()
     st.experimental_rerun()
