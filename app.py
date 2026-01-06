@@ -6,6 +6,8 @@ import os
 st.set_page_config(page_title="Jadwal Dokter", layout="wide")
 
 FILE_INPUT = "jadwal hafis.xlsx"
+FILE_OUTPUT = "jadwal coba.xlsx"
+
 HARI_LIST = ["SENIN", "SELASA", "RABU", "KAMIS", "JUMAT", "SABTU"]
 
 # =====================================================
@@ -23,6 +25,31 @@ def generate_time_slots(start="07:00", end="14:00", step=30):
 TIME_SLOTS = generate_time_slots()
 
 # =====================================================
+# SLOT -> RANGE
+# =====================================================
+def slots_to_ranges(slots):
+    if not slots:
+        return "-"
+
+    times = sorted(datetime.strptime(s, "%H:%M") for s in slots)
+    ranges = []
+
+    start = prev = times[0]
+    for t in times[1:]:
+        if t - prev == timedelta(minutes=30):
+            prev = t
+        else:
+            ranges.append((start, prev + timedelta(minutes=30)))
+            start = prev = t
+    ranges.append((start, prev + timedelta(minutes=30)))
+
+    return ", ".join(
+        f"{s.strftime('%H:%M').replace(':','.')}-"
+        f"{e.strftime('%H:%M').replace(':','.')}"
+        for s, e in ranges
+    )
+
+# =====================================================
 # PARSE JAM
 # =====================================================
 def parse_time_ranges(cell):
@@ -31,6 +58,7 @@ def parse_time_ranges(cell):
     text = str(cell).replace(".", ":").strip()
     if text in ["", "-"]:
         return []
+
     slots = []
     for part in text.split(","):
         try:
@@ -45,13 +73,10 @@ def parse_time_ranges(cell):
     return slots
 
 # =====================================================
-# LOAD EXCEL (SESUI FILE RS)
+# LOAD EXCEL
 # =====================================================
 @st.cache_data
 def load_excel():
-    if not os.path.exists(FILE_INPUT):
-        return pd.DataFrame()
-
     raw = pd.read_excel(FILE_INPUT)
     raw.columns = [c.strip().upper() for c in raw.columns]
 
@@ -61,16 +86,16 @@ def load_excel():
 
     records = []
 
-    for _, row in raw.iterrows():
+    for idx, row in raw.iterrows():
         jenis = str(row["POLI"]).upper()
         if jenis not in ["REGULER", "EKSEKUTIF"]:
             continue
 
         for hari in HARI_LIST:
             if hari in raw.columns:
-                slots = parse_time_ranges(row[hari])
-                for s in slots:
+                for s in parse_time_ranges(row[hari]):
                     records.append({
+                        "RowIndex": idx,
                         "KSM": row["KSM"],
                         "Dokter": row["NAMA DOKTER SPESIALIS/ SUB SPESIALIS"],
                         "Hari": hari,
@@ -78,23 +103,23 @@ def load_excel():
                         "Slot": s
                     })
 
-    return pd.DataFrame(records)
+    return raw, pd.DataFrame(records)
 
 # =====================================================
-# LOAD DATA
+# LOAD
 # =====================================================
-df = load_excel()
+raw_df, df = load_excel()
 
-st.title("📅 Jadwal Dokter (Editable Slot)")
+st.title("📅 Jadwal Dokter (Editable & Save to Excel)")
 
 if df.empty:
-    st.error("❌ Jadwal tidak terbentuk dari Excel.")
+    st.error("❌ Jadwal tidak terbentuk.")
     st.stop()
 
 # =====================================================
 # GRID
 # =====================================================
-st.subheader("📊 Jadwal (Grid Waktu)")
+st.subheader("📊 Jadwal")
 
 pivot = pd.DataFrame(
     index=sorted(df["Dokter"].unique()),
@@ -118,16 +143,15 @@ def color(val):
 st.dataframe(pivot.style.applymap(color), use_container_width=True)
 
 # =====================================================
-# SLOT EDITOR (POINT 1)
+# SLOT EDITOR
 # =====================================================
 st.divider()
-st.subheader("✏️ Edit Slot Jadwal")
+st.subheader("✏️ Edit Slot")
 
-col1, col2, col3 = st.columns(3)
-
-dokter = col1.selectbox("Dokter", sorted(df["Dokter"].unique()))
-hari = col2.selectbox("Hari", HARI_LIST)
-slot = col3.selectbox("Slot Waktu", TIME_SLOTS)
+c1, c2, c3 = st.columns(3)
+dokter = c1.selectbox("Dokter", sorted(df["Dokter"].unique()))
+hari = c2.selectbox("Hari", HARI_LIST)
+slot = c3.selectbox("Slot", TIME_SLOTS)
 
 current = df[
     (df["Dokter"] == dokter) &
@@ -135,11 +159,10 @@ current = df[
     (df["Slot"] == slot)
 ]
 
-current_status = (
-    current.iloc[0]["Jenis"] if not current.empty else "KOSONG"
+st.info(
+    f"Status saat ini: "
+    f"**{current.iloc[0]['Jenis'] if not current.empty else 'KOSONG'}**"
 )
-
-st.info(f"Status saat ini: **{current_status}**")
 
 new_status = st.radio(
     "Ubah menjadi:",
@@ -147,25 +170,50 @@ new_status = st.radio(
     horizontal=True
 )
 
-if st.button("💾 Simpan Perubahan"):
-    # Hapus slot lama
+if st.button("💾 Simpan Perubahan Slot"):
     df.drop(current.index, inplace=True)
 
     if new_status != "KOSONG":
-        # Validasi eksekutif
         if new_status == "EKSEKUTIF":
             count = df[
                 (df["Hari"] == hari) &
                 (df["Slot"] == slot) &
                 (df["Jenis"] == "EKSEKUTIF")
             ].shape[0]
-
             if count >= 7:
-                st.warning("❌ Slot EKSEKUTIF sudah penuh (maks 7)")
+                st.warning("❌ Slot EKSEKUTIF sudah penuh")
                 st.stop()
 
         ksm = df[df["Dokter"] == dokter].iloc[0]["KSM"]
-        df.loc[len(df)] = [ksm, dokter, hari, new_status, slot]
+        df.loc[len(df)] = [None, ksm, dokter, hari, new_status, slot]
 
-    st.success("✅ Slot berhasil diperbarui")
+    st.success("Slot diperbarui")
     st.experimental_rerun()
+
+# =====================================================
+# SAVE BACK TO EXCEL (POINT 2)
+# =====================================================
+st.divider()
+st.subheader("💾 Simpan ke Excel (Format RS)")
+
+if st.button("📤 Simpan ke jadwal coba.xlsx"):
+    out = raw_df.copy()
+
+    for idx, row in out.iterrows():
+        jenis = str(row["POLI"]).upper()
+        if jenis not in ["REGULER", "EKSEKUTIF"]:
+            continue
+
+        dokter = row["NAMA DOKTER SPESIALIS/ SUB SPESIALIS"]
+
+        for hari in HARI_LIST:
+            slots = df[
+                (df["Dokter"] == dokter) &
+                (df["Hari"] == hari) &
+                (df["Jenis"] == jenis)
+            ]["Slot"].tolist()
+
+            out.at[idx, hari] = slots_to_ranges(slots)
+
+    out.to_excel(FILE_OUTPUT, index=False)
+    st.success("✅ Berhasil disimpan ke jadwal coba.xlsx")
