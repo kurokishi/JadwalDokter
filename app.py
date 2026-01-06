@@ -35,8 +35,7 @@ JAM_SLOTS = pd.date_range("07:00", "14:00", freq="30min").strftime("%H:%M").toli
 # ======================================================
 def normalize_columns(df):
     df.columns = (
-        df.columns
-        .astype(str)
+        df.columns.astype(str)
         .str.upper()
         .str.strip()
         .str.replace("\n", " ", regex=False)
@@ -93,17 +92,17 @@ def build_long_df(raw):
                     "Jam": jam,
                     "Dokter": r[col_dokter],
                     "Poli": r[col_ksm],
-                    "Jenis": r[col_poli]
+                    "Jenis": str(r[col_poli]).upper()
                 })
 
     return pd.DataFrame(rows)
 
 
-def build_grid(df_hari):
+def build_grid_with_jenis(df_hari):
     if df_hari.empty:
-        return pd.DataFrame()
+        return None, None
 
-    grid = (
+    grid_value = (
         df_hari
         .pivot_table(
             index="Jam",
@@ -115,10 +114,36 @@ def build_grid(df_hari):
         .reset_index()
     )
 
-    return grid
+    grid_jenis = (
+        df_hari
+        .pivot_table(
+            index="Jam",
+            columns="Dokter",
+            values="Jenis",
+            aggfunc="first"
+        )
+        .reindex(JAM_SLOTS)
+        .reset_index()
+    )
+
+    return grid_value, grid_jenis
+
+
+def style_grid(grid_value, grid_jenis):
+    styles = pd.DataFrame("", index=grid_value.index, columns=grid_value.columns)
+
+    for col in grid_value.columns[1:]:  # skip Jam
+        for i in grid_value.index:
+            jenis = grid_jenis.at[i, col]
+            if jenis == "REGULER":
+                styles.at[i, col] = "background-color:#C6EFCE;color:black;"
+            elif jenis == "EKSEKUTIF":
+                styles.at[i, col] = "background-color:#BDD7EE;color:black;"
+
+    return styles
 
 # ======================================================
-# EXPORT EXCEL (LANDSCAPE, 1 SHEET / HARI)
+# EXPORT EXCEL (LANDSCAPE)
 # ======================================================
 def export_excel_landscape(df):
     buffer = BytesIO()
@@ -126,9 +151,9 @@ def export_excel_landscape(df):
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for hari in HARI_LIST:
             df_hari = df[df["Hari"] == hari]
-            grid = build_grid(df_hari)
+            grid, _ = build_grid_with_jenis(df_hari)
 
-            if grid.empty:
+            if grid is None or grid.empty:
                 grid = pd.DataFrame({"Info": [f"Tidak ada jadwal hari {hari}"]})
 
             grid.to_excel(writer, sheet_name=hari, index=False, startrow=1)
@@ -138,19 +163,11 @@ def export_excel_landscape(df):
 
     for hari in HARI_LIST:
         ws = wb[hari]
-
-        # Landscape & fit
         ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
         ws.page_setup.fitToWidth = 1
 
-        # Judul
         ws.insert_rows(1)
-        ws.merge_cells(
-            start_row=1,
-            start_column=1,
-            end_row=1,
-            end_column=ws.max_column
-        )
+        ws.merge_cells(1, 1, 1, ws.max_column)
 
         title = ws.cell(row=1, column=1)
         title.value = f"JADWAL DOKTER – {hari}"
@@ -159,16 +176,13 @@ def export_excel_landscape(df):
 
         ws.freeze_panes = "A3"
 
-        # Auto width kolom (AMAN merged cell)
         for col_idx in range(1, ws.max_column + 1):
             col_letter = get_column_letter(col_idx)
             max_len = 0
-
             for row_idx in range(2, ws.max_row + 1):
                 val = ws.cell(row=row_idx, column=col_idx).value
                 if val:
                     max_len = max(max_len, len(str(val)))
-
             ws.column_dimensions[col_letter].width = min(max_len + 2, 25)
 
     final = BytesIO()
@@ -190,18 +204,30 @@ def load_data():
 
 
 raw_df = load_data()
+if raw_df.empty:
+    st.stop()
 
 # ======================================================
 # HEADER
 # ======================================================
-st.markdown(
-    "<h1 style='text-align:center'>📺 JADWAL DOKTER RAWAT JALAN</h1>",
-    unsafe_allow_html=True
-)
+st.markdown("<h1 style='text-align:center'>📺 JADWAL DOKTER RAWAT JALAN</h1>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
-if raw_df.empty:
-    st.stop()
+# ======================================================
+# LEGEND WARNA (POIN 5)
+# ======================================================
+st.markdown("""
+<div style="display:flex;justify-content:center;gap:60px;font-size:20px;margin-bottom:12px;">
+  <div>
+    <span style="display:inline-block;width:24px;height:24px;background:#C6EFCE;border:1px solid #555;margin-right:8px;"></span>
+    <b>REGULER</b>
+  </div>
+  <div>
+    <span style="display:inline-block;width:24px;height:24px;background:#BDD7EE;border:1px solid #555;margin-right:8px;"></span>
+    <b>EKSEKUTIF</b>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ======================================================
 # PROSES DATA
@@ -215,8 +241,19 @@ tabs = st.tabs(HARI_LIST)
 
 for i, hari in enumerate(HARI_LIST):
     with tabs[i]:
-        grid = build_grid(df_long[df_long["Hari"] == hari])
-        st.dataframe(grid, use_container_width=True, height=520)
+        grid_val, grid_jenis = build_grid_with_jenis(
+            df_long[df_long["Hari"] == hari]
+        )
+
+        if grid_val is None:
+            st.info("Tidak ada jadwal")
+        else:
+            styled = grid_val.style.apply(
+                lambda _: style_grid(grid_val, grid_jenis),
+                axis=None
+            )
+
+            st.dataframe(styled, use_container_width=True, height=520)
 
 # ======================================================
 # EXPORT
