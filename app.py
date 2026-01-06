@@ -1,366 +1,243 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from datetime import datetime, time
-import io
-import json
+from datetime import datetime, time, timedelta
+import plotly.express as px
+from openpyxl import Workbook
+import os
 
-# Konfigurasi halaman
+# =========================================================
+# CONFIG
+# =========================================================
 st.set_page_config(
-    page_title="Jadwal Dokter RS",
-    page_icon="🏥",
-    layout="wide"
+    page_title="Jadwal Dokter",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Inisialisasi session state
-if 'jadwal_data' not in st.session_state:
-    st.session_state.jadwal_data = None
-if 'uploaded_file' not in st.session_state:
-    st.session_state.uploaded_file = None
+FILE_INPUT = "/mnt/data/jadwal hafis.xlsx"
+FILE_OUTPUT = "/mnt/data/jadwal coba.xlsx"
 
-# Fungsi helper yang lebih sederhana
-def parse_time_range(time_str):
-    """Parse waktu dari format 07.30-14.00 atau 07:30-14:00"""
-    if not time_str or str(time_str).strip() in ['', '-', 'nan', 'None']:
+HARI_LIST = ["SENIN", "SELASA", "RABU", "KAMIS", "JUMAT", "SABTU"]
+
+# =========================================================
+# HELPER FUNCTIONS
+# =========================================================
+def generate_time_slots(start="07:00", end="14:00", step=30):
+    slots = []
+    t = datetime.strptime(start, "%H:%M")
+    end_t = datetime.strptime(end, "%H:%M")
+    while t <= end_t:
+        slots.append(t.strftime("%H:%M"))
+        t += timedelta(minutes=step)
+    return slots
+
+
+TIME_SLOTS = generate_time_slots()
+
+
+def parse_time_ranges(cell):
+    """
+    "08.30-09.30, 10.30-11.30" → ['08:30','09:00','09:30','10:30','11:00','11:30']
+    """
+    if pd.isna(cell) or cell == "-" or str(cell).strip() == "":
         return []
-    
-    time_str = str(time_str).replace('.', ':')
-    
-    # Handle multiple ranges
-    ranges = []
-    for part in time_str.split(','):
-        part = part.strip()
-        if '-' in part:
-            try:
-                start, end = part.split('-')
-                start = start.strip()
-                end = end.strip()
-                ranges.append(f"{start}-{end}")
-            except:
-                continue
-    return ranges
 
-def process_uploaded_file(uploaded_file):
-    """Proses file Excel yang diupload"""
-    try:
-        # Baca file Excel
-        df = pd.read_excel(uploaded_file)
-        
-        # Debug: tampilkan kolom yang ada
-        st.info(f"Kolom yang ditemukan: {list(df.columns)}")
-        
-        # Proses data
-        processed_data = []
-        
-        # Cari kolom yang ada
-        columns = df.columns
-        ksm_col = None
-        dokter_col = None
-        poli_col = None
-        
-        # Cari kolom KSM
-        for col in columns:
-            if 'KSM' in str(col).upper():
-                ksm_col = col
-                break
-        
-        # Cari kolom Nama Dokter
-        for col in columns:
-            if 'NAMA' in str(col).upper() or 'DOKTER' in str(col).upper():
-                dokter_col = col
-                break
-        
-        # Cari kolom POLI
-        for col in columns:
-            if 'POLI' in str(col).upper():
-                poli_col = col
-                break
-        
-        # Hari-hari
-        days = ['SENIN', 'SELASA', 'RABU', 'KAMIS', 'JUMAT', 'SABTU']
-        day_cols = []
-        for day in days:
-            if day in columns:
-                day_cols.append(day)
-        
-        # Jika tidak ditemukan kolom hari standar, cari yang lain
-        if not day_cols:
-            for col in columns:
-                if any(day in str(col).upper() for day in days):
-                    day_cols.append(col)
-        
-        # Logika pemrosesan
-        current_ksm = None
-        current_dokter = None
-        
-        for idx, row in df.iterrows():
-            # Update KSM
-            if ksm_col and pd.notna(row[ksm_col]):
-                current_ksm = row[ksm_col]
-            
-            # Update Dokter
-            if dokter_col and pd.notna(row[dokter_col]):
-                current_dokter = row[dokter_col]
-            
-            # Proses jadwal
-            if poli_col and pd.notna(row[poli_col]):
-                jadwal_type = row[poli_col]
-                
-                # Proses setiap hari
-                for day in day_cols:
-                    if day in df.columns and pd.notna(row[day]):
-                        jam_value = row[day]
-                        if str(jam_value).strip() not in ['', '-', 'nan']:
-                            processed_data.append({
-                                'KSM': current_ksm,
-                                'Dokter': current_dokter,
-                                'Jenis': jadwal_type,
-                                'Hari': day,
-                                'Jam': str(jam_value)
-                            })
-        
-        return pd.DataFrame(processed_data)
-    
-    except Exception as e:
-        st.error(f"Error processing file: {str(e)}")
+    cell = str(cell).replace(".", ":")
+    ranges = cell.split(",")
+
+    slots = []
+    for r in ranges:
+        start, end = r.strip().split("-")
+        t = datetime.strptime(start.strip(), "%H:%M")
+        end_t = datetime.strptime(end.strip(), "%H:%M")
+        while t < end_t:
+            slots.append(t.strftime("%H:%M"))
+            t += timedelta(minutes=30)
+    return slots
+
+
+@st.cache_data
+def load_excel():
+    if not os.path.exists(FILE_INPUT):
         return pd.DataFrame()
 
-def create_empty_template():
-    """Buat template kosong"""
-    return pd.DataFrame(columns=['KSM', 'Dokter', 'Jenis', 'Hari', 'Jam'])
+    df = pd.read_excel(FILE_INPUT, sheet_name="Sheet1")
+    records = []
+
+    for _, row in df.iterrows():
+        ksm = row.iloc[0]
+        dokter = row.iloc[1]
+        poli = row.iloc[2]
+
+        for hari in HARI_LIST:
+            if hari in row:
+                slots = parse_time_ranges(row[hari])
+                for s in slots:
+                    records.append({
+                        "KSM": ksm,
+                        "Dokter": dokter,
+                        "Hari": hari,
+                        "Jenis": poli.upper(),
+                        "Slot": s
+                    })
+
+    return pd.DataFrame(records)
+
 
 def save_to_excel(df):
-    """Simpan data ke Excel"""
-    try:
-        # Buat Excel sederhana
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Jadwal')
-        
-        output.seek(0)
-        return output
-    except Exception as e:
-        st.error(f"Error saving Excel: {str(e)}")
-        return None
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
 
-def main():
-    st.title("🏥 Sistem Jadwal Dokter")
-    st.markdown("---")
-    
-    # Sidebar
-    with st.sidebar:
-        st.header("📁 Upload File")
-        
-        uploaded_file = st.file_uploader(
-            "Unggah file Excel jadwal dokter",
-            type=['xlsx', 'xls'],
-            key="file_uploader"
-        )
-        
-        if uploaded_file:
-            st.session_state.uploaded_file = uploaded_file
-            st.session_state.jadwal_data = process_uploaded_file(uploaded_file)
-            st.success("File berhasil diupload!")
-        
-        st.header("⚙️ Filter")
-        
-        # Mode tampilan
-        view_mode = st.radio(
-            "Mode",
-            ["View", "Edit"],
-            horizontal=True
-        )
-        
-        # Filter hanya jika ada data
-        if st.session_state.jadwal_data is not None and not st.session_state.jadwal_data.empty:
-            # Filter Poli
-            poli_options = ['Semua'] + sorted(st.session_state.jadwal_data['KSM'].dropna().unique().tolist())
-            selected_poli = st.selectbox("Poli/KSM", poli_options)
-            
-            # Filter Hari
-            hari_options = ['Semua'] + sorted(st.session_state.jadwal_data['Hari'].dropna().unique().tolist())
-            selected_hari = st.multiselect("Hari", hari_options, default=['Semua'])
-            
-            # Filter Jenis
-            jenis_options = ['Semua', 'REGULER', 'EKSEKUTIF', 'JAM KERJA']
-            selected_jenis = st.multiselect("Jenis", jenis_options, default=['Semua'])
-        
-        st.header("📊 Statistik")
-        if st.session_state.jadwal_data is not None:
-            st.metric("Total Dokter", st.session_state.jadwal_data['Dokter'].nunique())
-            st.metric("Total Jadwal", len(st.session_state.jadwal_data))
-    
-    # Main content
-    if view_mode == "View":
-        display_view_mode()
-    else:
-        display_edit_mode()
+    headers = ["KSM", "Dokter", "Hari", "Jenis", "Slot"]
+    ws.append(headers)
 
-def display_view_mode():
-    """Tampilkan mode view"""
-    if st.session_state.jadwal_data is None or st.session_state.jadwal_data.empty:
-        st.info("Silakan upload file Excel jadwal dokter di sidebar.")
-        return
-    
-    data = st.session_state.jadwal_data.copy()
-    
-    # Terapkan filter
-    if 'selected_poli' in st.session_state and st.session_state.selected_poli != 'Semua':
-        data = data[data['KSM'] == st.session_state.selected_poli]
-    
-    if 'selected_hari' in st.session_state and 'Semua' not in st.session_state.selected_hari:
-        data = data[data['Hari'].isin(st.session_state.selected_hari)]
-    
-    if 'selected_jenis' in st.session_state and 'Semua' not in st.session_state.selected_jenis:
-        data = data[data['Jenis'].isin(st.session_state.selected_jenis)]
-    
-    # Tampilkan dalam tabs
-    tab1, tab2 = st.tabs(["📋 Data Table", "📅 Jadwal Grid"])
-    
-    with tab1:
-        # Tampilkan data
-        st.dataframe(
-            data,
-            use_container_width=True,
-            column_config={
-                "KSM": "Poli/KSM",
-                "Dokter": "Nama Dokter",
-                "Jenis": "Jenis Jadwal",
-                "Hari": "Hari",
-                "Jam": "Jam Praktik"
-            }
-        )
-        
-        # Tombol download
-        if not data.empty:
-            csv = data.to_csv(index=False)
-            st.download_button(
-                "📥 Download CSV",
-                csv,
-                "jadwal_dokter.csv",
-                "text/csv"
-            )
-    
-    with tab2:
-        # Buat grid sederhana
-        st.subheader("Grid Jadwal")
-        
-        # Pilih hari untuk ditampilkan
-        hari_grid = st.multiselect(
-            "Pilih Hari untuk Grid",
-            data['Hari'].unique(),
-            default=data['Hari'].unique()[:3]
-        )
-        
-        if hari_grid:
-            grid_data = data[data['Hari'].isin(hari_grid)]
-            
-            # Buat pivot table sederhana
-            try:
-                pivot_df = grid_data.pivot_table(
-                    index=['KSM', 'Dokter', 'Jenis'],
-                    columns='Hari',
-                    values='Jam',
-                    aggfunc=lambda x: ', '.join(str(v) for v in x if pd.notna(v))
-                ).fillna('-')
-                
-                # Style berdasarkan jenis
-                def color_by_type(val):
-                    if 'REGULER' in str(val):
-                        return 'background-color: #d4edda'
-                    elif 'EKSEKUTIF' in str(val):
-                        return 'background-color: #cce5ff'
-                    return ''
-                
-                styled_df = pivot_df.style.applymap(color_by_type)
-                st.dataframe(styled_df, use_container_width=True)
-            except:
-                st.dataframe(grid_data, use_container_width=True)
-        
-        # Visualisasi sederhana
-        st.subheader("Distribusi Jadwal")
-        
-        if not data.empty:
-            # Hitung per hari
-            distribusi = data['Hari'].value_counts().reset_index()
-            distribusi.columns = ['Hari', 'Jumlah']
-            
-            # Buat chart menggunakan streamlit native
-            st.bar_chart(distribusi.set_index('Hari'))
+    for _, r in df.iterrows():
+        ws.append(list(r.values))
 
-def display_edit_mode():
-    """Tampilkan mode edit"""
-    st.header("✏️ Edit Jadwal")
-    
-    if st.session_state.jadwal_data is None:
-        st.info("Upload file terlebih dahulu untuk mengedit jadwal.")
-        return
-    
-    data = st.session_state.jadwal_data.copy()
-    
-    col1, col2 = st.columns([3, 2])
-    
-    with col1:
-        st.subheader("Data Saat Ini")
-        edited_df = st.data_editor(
-            data,
-            use_container_width=True,
-            num_rows="dynamic",
-            column_config={
-                "KSM": st.column_config.TextColumn("Poli/KSM"),
-                "Dokter": st.column_config.TextColumn("Nama Dokter"),
-                "Jenis": st.column_config.SelectboxColumn(
-                    "Jenis Jadwal",
-                    options=['REGULER', 'EKSEKUTIF', 'JAM KERJA']
-                ),
-                "Hari": st.column_config.SelectboxColumn(
-                    "Hari",
-                    options=['SENIN', 'SELASA', 'RABU', 'KAMIS', 'JUMAT', 'SABTU']
-                ),
-                "Jam": st.column_config.TextColumn("Jam Praktik")
-            }
-        )
-        
-        # Update data jika ada perubahan
-        if not edited_df.equals(data):
-            st.session_state.jadwal_data = edited_df
-            st.success("Data berhasil diupdate!")
-    
-    with col2:
-        st.subheader("Tambah Jadwal Baru")
-        
-        with st.form("tambah_jadwal"):
-            new_ksm = st.text_input("Poli/KSM")
-            new_dokter = st.text_input("Nama Dokter")
-            new_jenis = st.selectbox("Jenis Jadwal", ['REGULER', 'EKSEKUTIF', 'JAM KERJA'])
-            new_hari = st.selectbox("Hari", ['SENIN', 'SELASA', 'RABU', 'KAMIS', 'JUMAT', 'SABTU'])
-            new_jam = st.text_input("Jam (contoh: 07.30-14.00)")
-            
-            if st.form_submit_button("➕ Tambah Jadwal"):
-                if new_ksm and new_dokter and new_jam:
-                    new_row = pd.DataFrame([{
-                        'KSM': new_ksm,
-                        'Dokter': new_dokter,
-                        'Jenis': new_jenis,
-                        'Hari': new_hari,
-                        'Jam': new_jam
-                    }])
-                    
-                    st.session_state.jadwal_data = pd.concat([data, new_row], ignore_index=True)
-                    st.success("Jadwal berhasil ditambahkan!")
-                    st.rerun()
-        
-        st.subheader("💾 Export Data")
-        
-        if st.button("Simpan ke Excel"):
-            excel_file = save_to_excel(st.session_state.jadwal_data)
-            if excel_file:
-                st.download_button(
-                    label="📥 Download Excel",
-                    data=excel_file,
-                    file_name="jadwal_dokter_updated.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+    wb.save(FILE_OUTPUT)
 
-if __name__ == "__main__":
-    main()
+
+def color_slot(val):
+    if val == "R":
+        return "background-color: #C6EFCE"
+    if val == "E":
+        return "background-color: #BDD7EE"
+    return "background-color: #F2F2F2"
+
+
+# =========================================================
+# LOAD DATA
+# =========================================================
+df = load_excel()
+
+st.title("📅 Aplikasi Penjadwalan Dokter")
+st.caption("Tampilan mirip Excel | Reguler & Eksekutif | Editable")
+
+# =========================================================
+# SIDEBAR FILTER
+# =========================================================
+st.sidebar.header("🔎 Filter")
+
+ksm_filter = st.sidebar.multiselect(
+    "Pilih KSM",
+    sorted(df["KSM"].unique()) if not df.empty else []
+)
+
+hari_filter = st.sidebar.multiselect(
+    "Hari",
+    ["SENIN", "SELASA", "RABU", "KAMIS", "JUMAT"],
+    default=["SENIN", "SELASA", "RABU", "KAMIS", "JUMAT"]
+)
+
+if st.sidebar.checkbox("Aktifkan Sabtu"):
+    hari_filter.append("SABTU")
+
+jenis_filter = st.sidebar.multiselect(
+    "Jenis Layanan",
+    ["REGULER", "EKSEKUTIF"],
+    default=["REGULER", "EKSEKUTIF"]
+)
+
+dokter_search = st.sidebar.text_input("Cari Dokter")
+
+# =========================================================
+# FILTER DATA
+# =========================================================
+filtered = df.copy()
+
+if ksm_filter:
+    filtered = filtered[filtered["KSM"].isin(ksm_filter)]
+
+filtered = filtered[
+    filtered["Hari"].isin(hari_filter) &
+    filtered["Jenis"].isin(jenis_filter)
+]
+
+if dokter_search:
+    filtered = filtered[
+        filtered["Dokter"].str.contains(dokter_search, case=False)
+    ]
+
+# =========================================================
+# DASHBOARD OVERVIEW
+# =========================================================
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Jumlah Dokter Aktif", filtered["Dokter"].nunique())
+col2.metric("Total Slot", len(filtered))
+col3.metric("Hari Aktif", filtered["Hari"].nunique())
+
+chart = filtered.groupby("Hari").size().reset_index(name="Slot")
+fig = px.bar(chart, x="Hari", y="Slot", title="Ketersediaan Slot per Hari")
+st.plotly_chart(fig, use_container_width=True)
+
+# =========================================================
+# GRID EXCEL-LIKE VIEW
+# =========================================================
+st.subheader("📊 Tampilan Jadwal (Excel-like)")
+
+if not filtered.empty:
+    pivot = pd.DataFrame(index=filtered["Dokter"].unique(), columns=TIME_SLOTS)
+
+    for _, r in filtered.iterrows():
+        pivot.loc[r["Dokter"], r["Slot"]] = "R" if r["Jenis"] == "REGULER" else "E"
+
+    pivot = pivot.fillna("")
+
+    st.dataframe(
+        pivot.style.applymap(color_slot),
+        use_container_width=True,
+        height=500
+    )
+else:
+    st.info("Tidak ada data sesuai filter.")
+
+# =========================================================
+# EDIT MODE
+# =========================================================
+st.divider()
+st.subheader("✏️ Edit / Tambah Jadwal")
+
+with st.form("edit_form"):
+    col1, col2, col3 = st.columns(3)
+
+    ksm = col1.text_input("KSM")
+    dokter = col2.text_input("Nama Dokter")
+    hari = col3.selectbox("Hari", HARI_LIST)
+
+    col4, col5 = st.columns(2)
+    jenis = col4.selectbox("Jenis", ["REGULER", "EKSEKUTIF"])
+    slots = col5.multiselect("Slot Waktu", TIME_SLOTS)
+
+    submitted = st.form_submit_button("➕ Tambahkan Jadwal")
+
+    if submitted:
+        if jenis == "EKSEKUTIF":
+            for s in slots:
+                count = df[
+                    (df["Hari"] == hari) &
+                    (df["Slot"] == s) &
+                    (df["Jenis"] == "EKSEKUTIF")
+                ].shape[0]
+                if count >= 7:
+                    st.warning(f"Slot {s} di {hari} sudah penuh (maks 7 Eksekutif)")
+                    st.stop()
+
+        for s in slots:
+            df.loc[len(df)] = [ksm, dokter, hari, jenis, s]
+
+        st.success("Jadwal berhasil ditambahkan!")
+
+# =========================================================
+# ACTION BUTTONS
+# =========================================================
+col1, col2 = st.columns(2)
+
+if col1.button("💾 Simpan ke Excel"):
+    save_to_excel(df)
+    st.success(f"Data tersimpan ke {FILE_OUTPUT}")
+
+if col2.button("🔄 Refresh Data"):
+    st.cache_data.clear()
+    st.experimental_rerun()
