@@ -1,299 +1,178 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
-import plotly.express as px
+import re
 from io import BytesIO
-import os
+from datetime import datetime
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Font
 
-# =====================================================
-# CONFIG PRODUKSI
-# =====================================================
+# =========================
+# KONFIGURASI HALAMAN
+# =========================
 st.set_page_config(
-    page_title="Sistem Jadwal Dokter RS",
-    layout="wide"
+    page_title="Jadwal Dokter",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-FILE_INPUT = "jadwal hafis.xlsx"
+# =========================
+# KONSTANTA
+# =========================
+FILE_EXCEL = "jadwal hafis.xlsx"
 HARI_LIST = ["SENIN", "SELASA", "RABU", "KAMIS", "JUMAT", "SABTU"]
+JAM_SLOTS = pd.date_range("07:00", "14:00", freq="30min").strftime("%H:%M").tolist()
 
-# =====================================================
-# TIME SLOT
-# =====================================================
-def generate_time_slots(start="07:00", end="14:00", step=30):
-    slots = []
-    t = datetime.strptime(start, "%H:%M")
-    end_t = datetime.strptime(end, "%H:%M")
-    while t < end_t:
-        slots.append(t.strftime("%H:%M"))
-        t += timedelta(minutes=step)
-    return slots
-
-TIME_SLOTS = generate_time_slots()
-
-# =====================================================
-# PARSE JAM EXCEL
-# =====================================================
-def parse_time_ranges(cell):
-    if pd.isna(cell):
-        return []
-    text = str(cell).replace(".", ":").strip()
-    if text in ["", "-"]:
+# =========================
+# UTILITAS
+# =========================
+def parse_jam(text):
+    if pd.isna(text) or text == "-" or str(text).strip() == "":
         return []
 
-    slots = []
+    text = str(text).replace(".", ":")
+    hasil = []
+
     for part in text.split(","):
-        try:
-            start, end = part.strip().split("-")
-            t = datetime.strptime(start.strip(), "%H:%M")
-            end_t = datetime.strptime(end.strip(), "%H:%M")
-            while t < end_t:
-                slots.append(t.strftime("%H:%M"))
-                t += timedelta(minutes=30)
-        except:
-            continue
-    return slots
+        match = re.findall(r"\d{2}:\d{2}", part)
+        if len(match) == 2:
+            start, end = match
+            slots = pd.date_range(start, end, freq="30min").strftime("%H:%M").tolist()
+            hasil.extend(slots[:-1])
 
-# =====================================================
-# SLOT → RANGE JAM (UNTUK EXPORT)
-# =====================================================
-def slots_to_ranges(slots):
-    if not slots:
-        return "-"
+    return hasil
 
-    times = sorted(datetime.strptime(s, "%H:%M") for s in slots)
-    ranges = []
+def build_long_df(raw):
+    rows = []
+    for _, r in raw.iterrows():
+        for hari in HARI_LIST:
+            slots = parse_jam(r.get(hari, ""))
+            for s in slots:
+                rows.append({
+                    "Hari": hari,
+                    "Jam": s,
+                    "Dokter": r["NAMA DOKTER SPESIALIS/ SUB SPESIALIS"],
+                    "Poli": r["KSM"],
+                    "Jenis": r["POLI"]
+                })
+    return pd.DataFrame(rows)
 
-    start = prev = times[0]
-    for t in times[1:]:
-        if t - prev == timedelta(minutes=30):
-            prev = t
-        else:
-            ranges.append((start, prev + timedelta(minutes=30)))
-            start = prev = t
-    ranges.append((start, prev + timedelta(minutes=30)))
+def build_grid(df_hari):
+    if df_hari.empty:
+        return pd.DataFrame()
 
-    return ", ".join(
-        f"{s.strftime('%H:%M').replace(':','.')}-"
-        f"{e.strftime('%H:%M').replace(':','.')}"
-        for s, e in ranges
+    return (
+        df_hari
+        .pivot_table(
+            index="Jam",
+            columns="Dokter",
+            values="Poli",
+            aggfunc="first"
+        )
+        .reindex(JAM_SLOTS)
+        .reset_index()
     )
 
-# =====================================================
+# =========================
+# EXPORT EXCEL LANDSCAPE
+# =========================
+def export_excel_landscape(df):
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for hari in HARI_LIST:
+            d = df[df["Hari"] == hari]
+            grid = build_grid(d)
+            if grid.empty:
+                grid = pd.DataFrame({"Info": [f"Tidak ada jadwal hari {hari}"]})
+
+            grid.to_excel(writer, sheet_name=hari, index=False, startrow=1)
+
+    output.seek(0)
+    wb = load_workbook(output)
+
+    for hari in HARI_LIST:
+        ws = wb[hari]
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.fitToWidth = 1
+
+        ws.insert_rows(1)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ws.max_column)
+        c = ws.cell(row=1, column=1)
+        c.value = f"JADWAL DOKTER – {hari}"
+        c.font = Font(size=14, bold=True)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+
+        ws.freeze_panes = "A3"
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value)) if cell.value else 0 for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 25)
+
+    final = BytesIO()
+    wb.save(final)
+    final.seek(0)
+    return final
+
+# =========================
 # LOAD DATA
-# =====================================================
+# =========================
 @st.cache_data
 def load_data():
-    if not os.path.exists(FILE_INPUT):
-        return None, pd.DataFrame()
+    try:
+        return pd.read_excel(FILE_EXCEL, sheet_name="Sheet1")
+    except:
+        return pd.DataFrame()
 
-    raw = pd.read_excel(FILE_INPUT)
-    raw.columns = [c.strip().upper() for c in raw.columns]
+raw_df = load_data()
 
-    raw["KSM"] = raw["KSM"].ffill()
-    raw["NAMA DOKTER SPESIALIS/ SUB SPESIALIS"] = raw[
-        "NAMA DOKTER SPESIALIS/ SUB SPESIALIS"
-    ].ffill()
+# =========================
+# HEADER TV MODE
+# =========================
+st.markdown("""
+<style>
+header {visibility: hidden;}
+footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
 
-    records = []
+st.markdown("<h1 style='text-align:center'>📺 JADWAL DOKTER RAWAT JALAN</h1>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
 
-    for _, row in raw.iterrows():
-        jenis = str(row["POLI"]).upper()
-        if jenis not in ["REGULER", "EKSEKUTIF"]:
-            continue
-
-        for hari in HARI_LIST:
-            if hari in raw.columns:
-                for slot in parse_time_ranges(row[hari]):
-                    records.append({
-                        "KSM": row["KSM"],
-                        "Dokter": row["NAMA DOKTER SPESIALIS/ SUB SPESIALIS"],
-                        "Hari": hari,
-                        "Jenis": jenis,
-                        "Slot": slot
-                    })
-
-    return raw, pd.DataFrame(records)
-
-raw_df, df = load_data()
-
-st.title("📅 Sistem Jadwal Dokter RS")
-
-if raw_df is None or df.empty:
-    st.error("❌ File jadwal hafis.xlsx tidak ditemukan atau data kosong.")
+# =========================
+# VALIDASI DATA
+# =========================
+if raw_df.empty:
+    st.error("❌ File Excel tidak ditemukan atau kosong.")
     st.stop()
 
-# =====================================================
-# SIDEBAR NAVIGATION
-# =====================================================
-st.sidebar.title("📋 Menu")
+# =========================
+# PROSES DATA
+# =========================
+df_long = build_long_df(raw_df)
 
-menu = st.sidebar.radio(
-    "Navigasi",
-    [
-        "Dashboard",
-        "Jadwal Harian",
-        "📺 Mode TV / Fullscreen",
-        "Jadwal Mingguan",
-        "✏️ Edit Jadwal",
-        "📤 Export / Cetak"
-    ]
+# =========================
+# TAMPILAN UTAMA (SEMUA HARI)
+# =========================
+tabs = st.tabs(HARI_LIST)
+
+for i, hari in enumerate(HARI_LIST):
+    with tabs[i]:
+        grid = build_grid(df_long[df_long["Hari"] == hari])
+        st.dataframe(grid, use_container_width=True, height=500)
+
+# =========================
+# EXPORT
+# =========================
+st.markdown("---")
+st.subheader("📤 Export Jadwal")
+
+excel = export_excel_landscape(df_long)
+
+st.download_button(
+    "⬇️ Download Excel (Landscape – 1 Sheet per Hari)",
+    data=excel,
+    file_name=f"jadwal_dokter_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-# =====================================================
-# GRID HELPER
-# =====================================================
-def build_grid(df_hari):
-    grid = pd.DataFrame(
-        index=sorted(df_hari["Dokter"].unique()),
-        columns=TIME_SLOTS
-    )
-
-    for _, r in df_hari.iterrows():
-        grid.loc[r["Dokter"], r["Slot"]] = (
-            "R" if r["Jenis"] == "REGULER" else "E"
-        )
-
-    grid = grid.fillna("")
-
-    def color(v):
-        if v == "R": return "background-color:#C6EFCE"
-        if v == "E": return "background-color:#BDD7EE"
-        return "background-color:#F2F2F2"
-
-    return grid.style.applymap(color)
-
-# =====================================================
-# DASHBOARD
-# =====================================================
-if menu == "Dashboard":
-    st.subheader("📊 Ringkasan Jadwal")
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Jumlah Dokter", df["Dokter"].nunique())
-    c2.metric("Slot Reguler", (df["Jenis"] == "REGULER").sum())
-    c3.metric("Slot Eksekutif", (df["Jenis"] == "EKSEKUTIF").sum())
-
-    chart = df.groupby(["Hari", "Jenis"]).size().reset_index(name="Slot")
-    fig = px.bar(chart, x="Hari", y="Slot", color="Jenis")
-    st.plotly_chart(fig, use_container_width=True)
-
-# =====================================================
-# JADWAL HARIAN
-# =====================================================
-elif menu == "Jadwal Harian":
-    st.subheader("📅 Jadwal Harian")
-
-    tabs = st.tabs(HARI_LIST)
-    for tab, hari in zip(tabs, HARI_LIST):
-        with tab:
-            st.dataframe(
-                build_grid(df[df["Hari"] == hari]),
-                use_container_width=True,
-                height=420
-            )
-
-# =====================================================
-# MODE TV + AUTO REFRESH
-# =====================================================
-elif menu == "📺 Mode TV / Fullscreen":
-
-    if "tv_last_refresh" not in st.session_state:
-        st.session_state.tv_last_refresh = datetime.now()
-
-    def auto_refresh(seconds):
-        if (datetime.now() - st.session_state.tv_last_refresh).seconds >= seconds:
-            st.session_state.tv_last_refresh = datetime.now()
-            st.experimental_rerun()
-
-    st.markdown("""
-        <style>
-        header {visibility: hidden;}
-        footer {visibility: hidden;}
-        </style>
-    """, unsafe_allow_html=True)
-
-    c1, c2 = st.columns([3, 1])
-    hari_tv = c1.selectbox("Hari", HARI_LIST)
-    refresh = c2.selectbox("Auto Refresh", [30, 60, 120], index=1)
-
-    st.markdown(
-        f"<h1 style='text-align:center;'>📺 JADWAL DOKTER – {hari_tv}</h1>",
-        unsafe_allow_html=True
-    )
-
-    st.dataframe(
-        build_grid(df[df["Hari"] == hari_tv]),
-        use_container_width=True,
-        height=600
-    )
-
-    st.info("🟩 Reguler | 🟦 Eksekutif")
-    auto_refresh(refresh)
-
-# =====================================================
-# JADWAL MINGGUAN
-# =====================================================
-elif menu == "Jadwal Mingguan":
-    st.subheader("🗓 Jadwal Mingguan")
-
-    dokter = st.selectbox("Pilih Dokter", sorted(df["Dokter"].unique()))
-    df_d = df[df["Dokter"] == dokter]
-
-    grid = pd.DataFrame(index=TIME_SLOTS, columns=HARI_LIST)
-    for _, r in df_d.iterrows():
-        grid.loc[r["Slot"], r["Hari"]] = (
-            "R" if r["Jenis"] == "REGULER" else "E"
-        )
-
-    st.dataframe(grid.fillna(""), use_container_width=True)
-
-# =====================================================
-# EDIT JADWAL
-# =====================================================
-elif menu == "✏️ Edit Jadwal":
-    st.subheader("✏️ Edit Slot Jadwal")
-
-    d = st.selectbox("Dokter", sorted(df["Dokter"].unique()))
-    h = st.selectbox("Hari", HARI_LIST)
-    s = st.selectbox("Jam", TIME_SLOTS)
-
-    current = df[(df["Dokter"] == d) & (df["Hari"] == h) & (df["Slot"] == s)]
-    st.info(f"Status: {current.iloc[0]['Jenis'] if not current.empty else 'KOSONG'}")
-
-    new = st.radio("Ubah menjadi", ["KOSONG", "REGULER", "EKSEKUTIF"], horizontal=True)
-
-    if st.button("💾 Simpan"):
-        df.drop(current.index, inplace=True)
-
-        if new != "KOSONG":
-            if new == "EKSEKUTIF":
-                if df[(df["Hari"] == h) & (df["Slot"] == s) & (df["Jenis"] == "EKSEKUTIF")].shape[0] >= 7:
-                    st.warning("Slot EKSEKUTIF penuh")
-                    st.stop()
-
-            ksm = df[df["Dokter"] == d].iloc[0]["KSM"]
-            df.loc[len(df)] = [ksm, d, h, new, s]
-
-        st.success("Slot diperbarui")
-        st.experimental_rerun()
-
-# =====================================================
-# EXPORT GRID EXCEL
-# =====================================================
-elif menu == "📤 Export / Cetak":
-    st.subheader("📤 Export Jadwal (Grid)")
-
-    hari = st.selectbox("Hari", HARI_LIST)
-
-    grid = build_grid(df[df["Hari"] == hari]).data
-
-    buffer = BytesIO()
-    grid.to_excel(buffer)
-    buffer.seek(0)
-
-    st.download_button(
-        "⬇️ Download Excel",
-        data=buffer,
-        file_name=f"jadwal_{hari}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+st.success("File siap dicetak dan dibagikan.")
