@@ -1,115 +1,184 @@
 # app/main.py
+"""
+Main module untuk aplikasi Streamlit
+"""
 import streamlit as st
-import pandas as pd
-import io
-from datetime import datetime
+from .config import config
+from .ui import (
+    render_home, 
+    render_upload, 
+    render_schedule, 
+    render_kanban, 
+    render_preferences, 
+    render_about
+)
+from .utils import initialize_session_state
 
-# Import yang diperbaiki - tanpa "app." prefix
-from config import Config
-from core.scheduler import Scheduler
-from core.cleaner import DataCleaner
-from core.time_parser import TimeParser
-from core.excel_writer import ExcelWriter
-from ui.sidebar import render_sidebar
+def setup_page():
+    """Setup halaman Streamlit"""
+    st.set_page_config(
+        page_title=config.PAGE_TITLE,
+        page_icon=config.PAGE_ICON,
+        layout=config.LAYOUT,
+        initial_sidebar_state="expanded"
+    )
+    
+    # Custom CSS
+    st.markdown(f"""
+        <style>
+        .main {{
+            padding: 1rem 2rem;
+        }}
+        
+        .stTabs [data-baseweb="tab-list"] {{
+            gap: 8px;
+            background-color: #f0f2f6;
+            padding: 8px;
+            border-radius: 10px;
+        }}
+        
+        .stTabs [data-baseweb="tab"] {{
+            height: 50px;
+            padding: 0 20px;
+            background-color: white;
+            border-radius: 5px;
+            color: {config.COLORS['primary']};
+            font-weight: 500;
+        }}
+        
+        .stTabs [aria-selected="true"] {{
+            background-color: {config.COLORS['primary']} !important;
+            color: white !important;
+        }}
+        
+        .schedule-card {{
+            padding: 15px;
+            border-radius: 10px;
+            margin: 5px 0;
+            border-left: 5px solid {config.COLORS['primary']};
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        
+        .doctor-badge {{
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 600;
+            margin: 2px;
+        }}
+        
+        .metric-card {{
+            padding: 15px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, {config.COLORS['primary']}, {config.COLORS['info']});
+            color: white;
+            text-align: center;
+        }}
+        </style>
+    """, unsafe_allow_html=True)
 
+def render_sidebar():
+    """Render sidebar dengan navigasi dan info"""
+    with st.sidebar:
+        # Logo dan judul
+        st.markdown(f"""
+            <div style="text-align: center; padding: 20px 0;">
+                <h1 style="color: {config.COLORS['primary']}; margin-bottom: 5px;">🏥</h1>
+                <h3 style="color: {config.COLORS['primary']}; margin-top: 0;">{config.PAGE_TITLE}</h3>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Status aplikasi
+        st.markdown("### 📊 Status Aplikasi")
+        
+        # Cek data yang diupload
+        if 'uploaded_data' in st.session_state:
+            data_status = "✅ Data Tersedia"
+            data_color = config.COLORS['success']
+        else:
+            data_status = "⚠️ Belum Ada Data"
+            data_color = config.COLORS['warning']
+        
+        st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; border-left: 4px solid {data_color}; margin: 10px 0;">
+                <strong>{data_status}</strong>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Info versi
+        st.markdown("---")
+        st.markdown(f"""
+            <div style="text-align: center; color: #666; font-size: 12px; padding: 10px;">
+                <strong>v{config.__version__}</strong><br>
+                © 2024 Tim Pengembang
+            </div>
+        """, unsafe_allow_html=True)
 
 def main():
-    st.set_page_config(
-        page_title="Pengolah Jadwal Poli",
-        page_icon="🚀",
-        layout="wide"
-    )
+    """Fungsi utama aplikasi"""
+    # Setup halaman
+    setup_page()
     
-    config = Config()
-    render_sidebar(config)
-
-    st.title("🚀 Pengolah Jadwal Poli Modular")
+    # Initialize session state
+    initialize_session_state()
     
-    st.markdown("""
-    Upload file Excel jadwal dokter untuk diproses. Mendukung:
-    - **Format baru (KSM)**: Template dengan kolom JAM KERJA/REGULER/EKSEKUTIF
-    - **Format lama**: Sheet Reguler dan Poleks terpisah
-    """)
-
-    uploaded = st.file_uploader(
-        "Upload Excel",
-        type=['xlsx', 'xls'],
-        help="Upload file jadwal dokter dalam format Excel"
-    )
-
-    if uploaded:
-        st.success(f"File terupload: **{uploaded.name}**")
-        
-        if st.button("🚀 Proses Jadwal", type="primary"):
-            with st.spinner("Memproses data... Mohon tunggu"):
-                try:
-                    parser = TimeParser(
-                        start_hour=config.start_hour,
-                        start_minute=config.start_minute,
-                        interval_minutes=config.interval_minutes
-                    )
-                    cleaner = DataCleaner()
-                    scheduler = Scheduler(parser, cleaner, config)
-                    
-                    file_bytes = uploaded.getvalue()
-                    file_stream = io.BytesIO(file_bytes)
-                    
-                    grid_df, slot_strings, errors = scheduler.process_dataframe(file_stream)
-                    
-                    if grid_df is not None and not grid_df.empty:
-                        st.session_state["processed_data"] = grid_df
-                        st.session_state["slot_strings"] = slot_strings
-                        st.session_state["file_bytes"] = file_bytes
-                        
-                        st.success(f"Data berhasil diproses! ({len(grid_df)} baris, {len(slot_strings)} slot waktu)")
-                        
-                        if errors:
-                            with st.expander(f"⚠️ {len(errors)} peringatan"):
-                                for error in errors:
-                                    st.write(f"- {error}")
-                    else:
-                        st.error("Gagal memproses data")
-                        if errors:
-                            for error in errors:
-                                st.error(error)
-                                
-                except Exception as e:
-                    st.error(f"Error saat memproses: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
+    # Render sidebar
+    render_sidebar()
     
-    if "processed_data" in st.session_state and st.session_state["processed_data"] is not None:
-        st.divider()
-        st.subheader("📊 Hasil Proses")
-        
-        grid_df = st.session_state["processed_data"]
-        slot_strings = st.session_state["slot_strings"]
-        
-        st.dataframe(grid_df, use_container_width=True)
-        
-        st.subheader("💾 Download Hasil")
-        
-        try:
-            writer = ExcelWriter(config)
-            file_stream = io.BytesIO(st.session_state["file_bytes"])
-            output_buffer = writer.write(
-                source_file=file_stream,
-                df_grid=grid_df,
-                slot_str=slot_strings
-            )
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"jadwal_hasil_{timestamp}.xlsx"
-            
-            st.download_button(
-                label="📥 Download Excel Hasil",
-                data=output_buffer,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        except Exception as e:
-            st.error(f"Gagal membuat file download: {str(e)}")
-
+    # Header utama
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown(f"""
+            <h1 style="text-align: center; color: {config.COLORS['primary']};">
+                🏥 {config.PAGE_TITLE}
+            </h1>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Tab navigasi
+    tab_titles = [
+        "🏠 Beranda",
+        "📤 Upload Data", 
+        "📅 Jadwal",
+        "🧩 Kanban Drag",
+        "⚙️ Preferensi",
+        "ℹ️ Tentang"
+    ]
+    
+    tabs = st.tabs(tab_titles)
+    
+    # Render masing-masing tab
+    with tabs[0]:
+        render_home()
+    
+    with tabs[1]:
+        render_upload()
+    
+    with tabs[2]:
+        render_schedule()
+    
+    with tabs[3]:
+        render_kanban()
+    
+    with tabs[4]:
+        render_preferences()
+    
+    with tabs[5]:
+        render_about()
+    
+    # Footer
+    st.markdown("---")
+    st.markdown(f"""
+        <div style="text-align: center; color: #666; font-size: 14px; padding: 20px;">
+            <strong>{config.PAGE_TITLE}</strong> | 
+            Sistem Manajemen Jadwal Dokter Terintegrasi
+        </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
