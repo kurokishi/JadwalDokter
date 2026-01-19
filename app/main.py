@@ -1,16 +1,16 @@
 # app/main.py
-
 import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
 
-from app.config import Config
-from app.core.scheduler import Scheduler
-from app.core.cleaner import DataCleaner
-from app.core.time_parser import TimeParser
-from app.core.excel_writer import ExcelWriter
-from app.ui.sidebar import render_sidebar
+# Import yang diperbaiki - tanpa "app." prefix
+from config import Config
+from core.scheduler import Scheduler
+from core.cleaner import DataCleaner
+from core.time_parser import TimeParser
+from core.excel_writer import ExcelWriter
+from ui.sidebar import render_sidebar
 
 
 def main():
