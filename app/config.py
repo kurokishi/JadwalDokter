@@ -1,3 +1,4 @@
+# app/config.py
 from dataclasses import dataclass, field
 from datetime import time
 
@@ -26,5 +27,6 @@ class Config:
             hari.append("Sabtu")
         return hari
 
-    def time_slot_end(self):
+    @property
+    def time_slot_end(self):  # <-- Diubah menjadi property
         return time(14, 30)
