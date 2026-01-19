@@ -1,0 +1,1387 @@
+"""
+ExcelWriter - Modul untuk menulis hasil jadwal ke file Excel
+Membuat file Excel dengan multiple sheets: Jadwal, Rekap, Analisis, dll.
+"""
+
+import io
+import pandas as pd
+from datetime import datetime, timedelta
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.chart import BarChart, Reference
+from openpyxl.utils import get_column_letter
+import traceback
+
+
+class ExcelWriter:
+    def __init__(self, config):
+        """
+        Inisialisasi ExcelWriter dengan konfigurasi
+        
+        Args:
+            config: Config object berisi pengaturan aplikasi
+        """
+        self.config = config
+        self.interval = config.interval_minutes
+        self.max_e = config.max_poleks_per_slot
+        
+        print(f"✅ ExcelWriter initialized with config:")
+        print(f"   - Interval: {self.interval} minutes")
+        print(f"   - Max poleks per slot: {self.max_e}")
+        print(f"   - Color rules: R=Green, E(≤{self.max_e})=Blue, E(>{self.max_e})=Red")
+        
+        # ======================================================
+        # DEFINE COLORS - PERBAIKAN WARNA
+        # ======================================================
+        
+        # WARNA UTAMA UNTUK SLOT
+        self.fill_r = PatternFill("solid", fgColor="92D050")     # HIJAU TERANG - Reguler
+        self.fill_e = PatternFill("solid", fgColor="4BACC6")     # BIRU - Poleks (dalam batas)
+        self.fill_over = PatternFill("solid", fgColor="FF0000")  # MERAH - Poleks (overload)
+        
+        # WARNA TAMBAHAN
+        self.fill_header = PatternFill("solid", fgColor="366092")  # Biru tua - Header
+        self.fill_gray = PatternFill("solid", fgColor="F2F2F2")    # Abu-abu - Alternating rows
+        self.fill_total = PatternFill("solid", fgColor="FFE699")   # Kuning muda - Total
+        
+        # Warna konflik
+        self.fill_conflict = PatternFill("solid", fgColor="FFD966")  # Kuning - Konflik ringan
+        self.fill_conflict_hard = PatternFill("solid", fgColor="FF4500")  # Merah tua - Konflik berat
+        
+        # Font
+        self.font_header = Font(bold=True, color="FFFFFF", size=11)
+        self.font_normal = Font(size=10)
+        self.font_bold = Font(bold=True)
+        self.font_small = Font(size=9)
+        
+        # Alignment
+        self.align_center = Alignment(horizontal="center", vertical="center")
+        self.align_left = Alignment(horizontal="left", vertical="center")
+        self.align_right = Alignment(horizontal="right", vertical="center")
+        
+        # Borders
+        self.thin_border = Border(
+            left=Side(style="thin"),
+            right=Side(style="thin"),
+            top=Side(style="thin"),
+            bottom=Side(style="thin")
+        )
+        
+        self.thick_border = Border(
+            bottom=Side(style="thick")
+        )
+        
+        print("✅ ExcelWriter styling configured")
+    
+    # ======================================================
+    # MAIN WRITE METHOD
+    # ======================================================
+    
+    def write(self, source_file, df_grid, slot_str):
+        """
+        Tulis hasil jadwal ke file Excel dengan multiple sheets
+        
+        Args:
+            source_file: File Excel asli (BytesIO atau path) sebagai template
+            df_grid: DataFrame hasil scheduler (format grid)
+            slot_str: List string slot waktu
+            
+        Returns:
+            BytesIO buffer berisi file Excel
+        """
+        print(f"📝 ExcelWriter.write() called")
+        print(f"   - df_grid shape: {df_grid.shape if df_grid is not None else 'None'}")
+        print(f"   - slot_str length: {len(slot_str) if slot_str else 0}")
+        print(f"   - Max poleks per slot: {self.max_e}")
+        
+        try:
+            # Load atau buat workbook
+            wb = self._load_or_create_workbook(source_file)
+            
+            print(f"✅ Workbook ready with {len(wb.sheetnames)} sheets")
+            
+            # Debug: tampilkan distribusi poleks
+            if df_grid is not None and not df_grid.empty:
+                self._debug_poleks_distribution(df_grid, slot_str)
+            
+            # Urutan pembuatan sheets
+            sheets_to_create = [
+                ("Jadwal", self._create_jadwal_sheet),
+                ("Rekap Layanan", lambda wb, df, slots: self._create_rekap_layanan_sheet(wb, df, slots)),
+                ("Rekap Poli", lambda wb, df, slots: self._create_rekap_poli_sheet(wb, df, slots)),
+                ("Rekap Dokter", lambda wb, df, slots: self._create_rekap_dokter_sheet(wb, df, slots)),
+                ("Peak Hour Analysis", lambda wb, df, slots: self._create_peak_hour_sheet(wb, df, slots)),
+                ("Conflict Dokter", lambda wb, df, slots: self._create_conflict_doctor_sheet(wb, df, slots)),
+                ("Peta Konflik Dokter", lambda wb, df, slots: self._create_conflict_map_sheet(wb, df, slots)),
+                ("Grafik Poli", lambda wb, df, slots: self._create_grafik_poli_sheet(wb, df)),
+                ("Summary", lambda wb, df, slots: self._create_summary_sheet(wb, df, slots)),
+            ]
+            
+            # Buat semua sheets
+            for sheet_name, create_func in sheets_to_create:
+                print(f"Creating '{sheet_name}' sheet...")
+                try:
+                    create_func(wb, df_grid, slot_str)
+                except Exception as e:
+                    print(f"⚠️ Error creating sheet '{sheet_name}': {e}")
+                    print(traceback.format_exc())
+            
+            # Apply styling ke semua sheets
+            print("Applying styling to all sheets...")
+            self._apply_styling_to_all_sheets(wb)
+            
+            # Auto adjust column widths
+            print("Auto-adjusting column widths...")
+            self._auto_adjust_column_widths(wb)
+            
+            # Reorder sheets untuk UX yang lebih baik
+            self._reorder_sheets(wb)
+            
+            # Save to buffer
+            print("Saving to buffer...")
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            
+            file_size = buf.getbuffer().nbytes
+            print(f"✅ Excel file created successfully: {file_size:,} bytes")
+            return buf
+            
+        except Exception as e:
+            print(f"❌ Error in ExcelWriter.write(): {e}")
+            print(traceback.format_exc())
+            # Fallback: buat workbook minimal
+            return self._create_fallback_workbook(df_grid, slot_str)
+    
+    def _debug_poleks_distribution(self, df_grid, slot_str):
+        """Debug: tampilkan distribusi poleks per slot"""
+        print("\n📊 DEBUG: POLEKS DISTRIBUTION PER HARI & SLOT")
+        print("=" * 60)
+        
+        if df_grid is None or df_grid.empty:
+            print("No data available")
+            return
+        
+        # Group by hari
+        for hari in sorted(df_grid["HARI"].unique()):
+            hari_data = df_grid[df_grid["HARI"] == hari]
+            print(f"\n📅 HARI: {hari}")
+            print("-" * 40)
+            
+            overload_slots = []
+            
+            for slot in slot_str[:15]:  # Tampilkan 15 slot pertama
+                if slot in hari_data.columns:
+                    e_count = (hari_data[slot] == "E").sum()
+                    r_count = (hari_data[slot] == "R").sum()
+                    
+                    if e_count > 0 or r_count > 0:
+                        status = ""
+                        if e_count > 0:
+                            if e_count <= self.max_e:
+                                status = f"OK ({e_count} Poleks)"
+                            else:
+                                status = f"OVERLOAD! {e_count} > {self.max_e}"
+                                overload_slots.append((slot, e_count))
+                        
+                        print(f"  {slot}: {r_count}R {e_count}E - {status}")
+            
+            # Tampilkan warning jika ada overload
+            if overload_slots:
+                print(f"\n  ⚠️ PERINGATAN OVERLOAD di {hari}:")
+                for slot, count in overload_slots:
+                    print(f"    - {slot}: {count} Poleks (batas: {self.max_e})")
+        
+        print("\n" + "=" * 60)
+    
+    def _load_or_create_workbook(self, source_file):
+        """Load workbook dari source atau buat baru"""
+        try:
+            if hasattr(source_file, 'read'):
+                # BytesIO atau file-like object
+                source_file.seek(0)
+                wb = load_workbook(source_file)
+                
+                # Hapus sheet yang mungkin mengganggu
+                sheets_to_remove = ["Jadwal", "Rekap Layanan", "Rekap Poli", 
+                                  "Rekap Dokter", "Peak Hour Analysis", 
+                                  "Conflict Dokter", "Peta Konflik Dokter",
+                                  "Grafik Poli", "Summary"]
+                
+                for sheet in sheets_to_remove:
+                    if sheet in wb.sheetnames:
+                        del wb[sheet]
+                
+                return wb
+                
+        except Exception as e:
+            print(f"⚠️ Could not load source workbook: {e}")
+        
+        # Buat workbook baru
+        wb = Workbook()
+        if "Sheet" in wb.sheetnames:
+            del wb["Sheet"]
+        
+        return wb
+    
+    def _create_fallback_workbook(self, df_grid, slot_str):
+        """Buat workbook fallback jika error"""
+        print("Creating fallback workbook...")
+        
+        try:
+            wb = Workbook()
+            if "Sheet" in wb.sheetnames:
+                del wb["Sheet"]
+            
+            # Buat sheet Jadwal saja
+            ws = wb.create_sheet("Jadwal")
+            
+            if df_grid is not None and not df_grid.empty:
+                # Header sederhana
+                headers = ["POLI", "JENIS", "HARI", "DOKTER", "JAM"] + slot_str
+                ws.append(headers)
+                
+                # Data
+                for _, row in df_grid.iterrows():
+                    ws.append([row.get(h, "") for h in headers])
+                
+                # Apply basic styling
+                self._style_jadwal_sheet_fallback(ws, df_grid, slot_str)
+            
+            # Simpan ke buffer
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            
+            return buf
+            
+        except Exception as e:
+            print(f"❌ Even fallback failed: {e}")
+            # Buat workbook kosong
+            wb = Workbook()
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            return buf
+    
+    # ======================================================
+    # SHEET CREATION METHODS
+    # ======================================================
+    
+    def _create_jadwal_sheet(self, wb, df_grid, slot_str):
+        """Buat sheet Jadwal utama"""
+        # Hapus sheet lama jika ada
+        if "Jadwal" in wb.sheetnames:
+            ws_index = wb.sheetnames.index("Jadwal")
+            del wb[wb.sheetnames[ws_index]]
+        
+        ws = wb.create_sheet("Jadwal", 0)  # Buat sebagai sheet pertama
+        
+        # Header
+        headers = ["POLI", "JENIS", "HARI", "DOKTER", "JAM"] + slot_str
+        ws.append(headers)
+        
+        # Data
+        if df_grid is not None and not df_grid.empty:
+            for _, row in df_grid.iterrows():
+                ws.append([row.get(h, "") for h in headers])
+        else:
+            # Tambahkan contoh jika tidak ada data
+            ws.append(["Poli Anak", "Reguler", "Senin", "dr. Contoh", "07:30-10:00"] + [""] * len(slot_str))
+        
+        # Apply styling DENGAN PERBAIKAN WARNA
+        self._style_jadwal_sheet(ws, df_grid, slot_str)
+        
+        # Freeze header row dan beberapa kolom
+        ws.freeze_panes = "F2"
+        
+        return ws
+    
+    def _style_jadwal_sheet(self, ws, df_grid, slot_str):
+        """Style sheet Jadwal dengan warna sesuai aturan"""
+        if ws.max_row <= 1:
+            return
+        
+        print(f"   Styling Jadwal sheet: {ws.max_row-1} rows, {ws.max_column} columns")
+        
+        # 1. STYLE HEADER
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.fill = self.fill_header
+            cell.font = self.font_header
+            cell.alignment = self.align_center
+            cell.border = self.thin_border
+        
+        # 2. STYLE DATA ROWS (kolom metadata)
+        for row in range(2, ws.max_row + 1):
+            for col in range(1, ws.max_column + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.border = self.thin_border
+                
+                # Alignment berdasarkan kolom
+                if col <= 4:  # POLI to HARI
+                    cell.alignment = self.align_left
+                elif col == 5:  # JAM
+                    cell.alignment = self.align_center
+                else:  # Slot waktu
+                    cell.alignment = self.align_center
+            
+            # Alternate row background untuk kolom metadata saja
+            if row % 2 == 0:
+                for col in range(1, 6):  # Hanya kolom metadata (A sampai E)
+                    ws.cell(row=row, column=col).fill = self.fill_gray
+        
+        # 3. WARNA SLOT WAKTU BERDASARKAN ATURAN
+        if df_grid is not None and not df_grid.empty and ws.max_row > 1:
+            print(f"   Applying color rules to time slots...")
+            
+            # Step 1: Kumpulkan semua baris E per (hari, slot) untuk menentukan urutan
+            poleks_tracking = {}
+            
+            for row_idx in range(2, min(len(df_grid) + 2, ws.max_row + 1)):
+                hari_cell = ws.cell(row=row_idx, column=3)  # Kolom C = HARI
+                hari = str(hari_cell.value).strip() if hari_cell.value else ""
+                
+                if not hari:
+                    continue
+                
+                for col_idx, slot in enumerate(slot_str, start=6):  # Kolom F dst
+                    if col_idx <= ws.max_column:
+                        cell = ws.cell(row=row_idx, column=col_idx)
+                        value = str(cell.value).strip() if cell.value else ""
+                        
+                        if value == "E":
+                            key = (hari, slot)
+                            if key not in poleks_tracking:
+                                poleks_tracking[key] = []
+                            poleks_tracking[key].append(row_idx)
+            
+            # Step 2: Apply warna berdasarkan aturan
+            overload_count = 0
+            
+            for row_idx in range(2, min(len(df_grid) + 2, ws.max_row + 1)):
+                hari_cell = ws.cell(row=row_idx, column=3)
+                hari = str(hari_cell.value).strip() if hari_cell.value else ""
+                
+                if not hari:
+                    continue
+                
+                for col_idx, slot in enumerate(slot_str, start=6):
+                    if col_idx <= ws.max_column:
+                        cell = ws.cell(row=row_idx, column=col_idx)
+                        value = str(cell.value).strip() if cell.value else ""
+                        
+                        # Reset fill ke default (transparan)
+                        cell.fill = PatternFill(fill_type=None)
+                        
+                        if value == "R":
+                            # REGULER: HIJAU
+                            cell.fill = self.fill_r
+                            cell.value = "R"
+                        
+                        elif value == "E":
+                            key = (hari, slot)
+                            
+                            if key in poleks_tracking:
+                                e_rows = poleks_tracking[key]
+                                
+                                # Cari posisi baris ini dalam daftar E untuk slot ini
+                                if row_idx in e_rows:
+                                    position = e_rows.index(row_idx)
+                                    
+                                    if position < self.max_e:
+                                        # Dalam batas: BIRU
+                                        cell.fill = self.fill_e
+                                    else:
+                                        # Melebihi batas: MERAH
+                                        cell.fill = self.fill_over
+                                        overload_count += 1
+                                else:
+                                    # Tidak ditemukan: BIRU (fallback)
+                                    cell.fill = self.fill_e
+                            else:
+                                # Tidak ada tracking: BIRU (fallback)
+                                cell.fill = self.fill_e
+                        
+                        else:
+                            # Kosong: hapus nilai dan biarkan tanpa warna
+                            cell.value = ""
+                        
+                        # Selalu center alignment
+                        cell.alignment = self.align_center
+            
+            # Debug info
+            if overload_count > 0:
+                print(f"   ⚠️ Found {overload_count} overloaded Poleks slots (colored RED)")
+        
+        print(f"   ✅ Jadwal sheet styling completed")
+    
+    def _style_jadwal_sheet_fallback(self, ws, df_grid, slot_str):
+        """Style fallback sederhana"""
+        if ws.max_row <= 1:
+            return
+        
+        # Header
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.fill = self.fill_header
+            cell.font = self.font_header
+            cell.alignment = self.align_center
+        
+        # Basic data styling
+        for row in range(2, ws.max_row + 1):
+            for col in range(1, ws.max_column + 1):
+                cell = ws.cell(row=row, column=col)
+                
+                if col <= 4:
+                    cell.alignment = self.align_left
+                else:
+                    cell.alignment = self.align_center
+                
+                # Simple coloring for R and E
+                if col >= 6 and cell.value:
+                    value = str(cell.value).strip()
+                    if value == "R":
+                        cell.fill = self.fill_r
+                    elif value == "E":
+                        cell.fill = self.fill_e
+    
+    def _create_rekap_layanan_sheet(self, wb, df_grid, slot_str):
+        """Buat sheet Rekap Layanan"""
+        if "Rekap Layanan" in wb.sheetnames:
+            del wb["Rekap Layanan"]
+        
+        ws = wb.create_sheet("Rekap Layanan")
+        ws.append(["POLI", "HARI", "DOKTER", "JENIS", "WAKTU LAYANAN"])
+        
+        if df_grid is not None and not df_grid.empty:
+            processed_combinations = set()
+            
+            for _, row in df_grid.iterrows():
+                poli = row["POLI"]
+                hari = row["HARI"]
+                dokter = row["DOKTER"]
+                jenis = row["JENIS"]
+                
+                combination_key = f"{poli}|{hari}|{dokter}|{jenis}"
+                if combination_key in processed_combinations:
+                    continue
+                
+                processed_combinations.add(combination_key)
+                
+                # Kumpulkan slot aktif
+                active_slots = []
+                for slot in slot_str:
+                    if slot in row and pd.notna(row[slot]) and row[slot] in ["R", "E"]:
+                        active_slots.append(slot)
+                
+                if active_slots:
+                    time_ranges = self._combine_slots_to_ranges(active_slots, slot_str)
+                    
+                    for time_range in time_ranges:
+                        ws.append([poli, hari, dokter, jenis, time_range])
+        
+        # Style
+        self._style_rekap_sheet(ws)
+        ws.freeze_panes = "A2"
+        
+        return ws
+    
+    def _create_rekap_poli_sheet(self, wb, df_grid, slot_str):
+        """Buat sheet Rekap Poli"""
+        if "Rekap Poli" in wb.sheetnames:
+            del wb["Rekap Poli"]
+        
+        ws = wb.create_sheet("Rekap Poli")
+        ws.append(["POLI", "HARI", "REGULER (JAM)", "POLEKS (JAM)", "TOTAL JAM"])
+        
+        if df_grid is not None and not df_grid.empty:
+            # Group by poli dan hari
+            poli_stats = {}
+            
+            for _, row in df_grid.iterrows():
+                poli = row["POLI"]
+                hari = row["HARI"]
+                key = (poli, hari)
+                
+                if key not in poli_stats:
+                    poli_stats[key] = {"R": 0, "E": 0}
+                
+                # Hitung slot R dan E
+                for slot in slot_str:
+                    if slot in row and pd.notna(row[slot]):
+                        if row[slot] == "R":
+                            poli_stats[key]["R"] += 1
+                        elif row[slot] == "E":
+                            poli_stats[key]["E"] += 1
+            
+            # Tulis data
+            for (poli, hari), counts in poli_stats.items():
+                hours_r = round(counts["R"] * self.interval / 60, 2)
+                hours_e = round(counts["E"] * self.interval / 60, 2)
+                total_hours = hours_r + hours_e
+                
+                ws.append([poli, hari, hours_r, hours_e, total_hours])
+        
+        # Add totals row
+        if ws.max_row > 1:
+            last_row = ws.max_row
+            ws.append(["TOTAL", "", 
+                      f"=SUM(C2:C{last_row})", 
+                      f"=SUM(D2:D{last_row})", 
+                      f"=SUM(E2:E{last_row})"])
+            
+            # Style total row
+            total_row = ws.max_row
+            for col in range(1, 6):
+                cell = ws.cell(row=total_row, column=col)
+                cell.fill = self.fill_total
+                cell.font = self.font_bold
+        
+        # Style
+        self._style_rekap_sheet(ws)
+        ws.freeze_panes = "A2"
+        
+        return ws
+    
+    def _create_rekap_dokter_sheet(self, wb, df_grid, slot_str):
+        """Buat sheet Rekap Dokter"""
+        if "Rekap Dokter" in wb.sheetnames:
+            del wb["Rekap Dokter"]
+        
+        ws = wb.create_sheet("Rekap Dokter")
+        ws.append(["DOKTER", "HARI", "SHIFT", "TOTAL JAM"])
+        
+        if df_grid is not None and not df_grid.empty:
+            # Group by dokter dan hari
+            doctor_shifts = {}
+            
+            for _, row in df_grid.iterrows():
+                dokter = row["DOKTER"]
+                hari = row["HARI"]
+                key = (dokter, hari)
+                
+                if key not in doctor_shifts:
+                    doctor_shifts[key] = []
+                
+                # Kumpulkan slot aktif
+                active_slots = []
+                for slot in slot_str:
+                    if slot in row and pd.notna(row[slot]) and row[slot] in ["R", "E"]:
+                        active_slots.append(slot)
+                
+                if active_slots:
+                    doctor_shifts[key].extend(active_slots)
+            
+            # Tulis data
+            for (dokter, hari), slots in doctor_shifts.items():
+                if slots:
+                    # Gabungkan slot berurutan
+                    unique_slots = sorted(set(slots))
+                    time_ranges = self._combine_slots_to_ranges(unique_slots, slot_str)
+                    
+                    for time_range in time_ranges:
+                        # Hitung durasi
+                        duration = self._calculate_duration(time_range, slot_str)
+                        ws.append([dokter, hari, time_range, round(duration, 2)])
+        
+        # Style
+        self._style_rekap_sheet(ws)
+        ws.freeze_panes = "A2"
+        
+        return ws
+    
+    def _create_peak_hour_sheet(self, wb, df_grid, slot_str):
+        """Buat sheet Peak Hour Analysis"""
+        if "Peak Hour Analysis" in wb.sheetnames:
+            del wb["Peak Hour Analysis"]
+        
+        ws = wb.create_sheet("Peak Hour Analysis")
+        ws.append(["HARI", "SLOT", "JUMLAH DOKTER", "LEVEL"])
+        
+        if df_grid is not None and not df_grid.empty:
+            # Hitung per hari
+            for hari in sorted(df_grid["HARI"].unique()):
+                hari_data = df_grid[df_grid["HARI"] == hari]
+                
+                for slot in slot_str:
+                    if slot in hari_data.columns:
+                        count = ((hari_data[slot] == "R") | (hari_data[slot] == "E")).sum()
+                        
+                        if count > 0:
+                            # Tentukan level
+                            if count >= 10:
+                                level = "VERY HIGH"
+                            elif count >= 7:
+                                level = "HIGH"
+                            elif count >= 4:
+                                level = "MEDIUM"
+                            else:
+                                level = "LOW"
+                            
+                            ws.append([hari, slot, count, level])
+        
+        # Style
+        self._style_rekap_sheet(ws)
+        ws.freeze_panes = "A2"
+        
+        return ws
+    
+    def _create_conflict_doctor_sheet(self, wb, df_grid, slot_str):
+        """Buat sheet Conflict Dokter"""
+        if "Conflict Dokter" in wb.sheetnames:
+            del wb["Conflict Dokter"]
+        
+        ws = wb.create_sheet("Conflict Dokter")
+        ws.append(["DOKTER", "HARI", "SLOT", "KETERANGAN", "TINGKAT"])
+        
+        if df_grid is not None and not df_grid.empty:
+            conflicts = self._find_doctor_conflicts(df_grid, slot_str)
+            
+            for conflict in conflicts:
+                ws.append([
+                    conflict["dokter"],
+                    conflict["hari"],
+                    conflict["slot"],
+                    conflict["keterangan"],
+                    conflict["tingkat"]
+                ])
+        
+        # Jika tidak ada konflik
+        if ws.max_row == 1:
+            ws.append(["", "", "", "✅ Tidak ada konflik ditemukan", "INFO"])
+        
+        # Style
+        self._style_conflict_sheet(ws)
+        ws.freeze_panes = "A2"
+        
+        return ws
+    
+    def _create_conflict_map_sheet(self, wb, df_grid, slot_str):
+        """Buat sheet Peta Konflik Dokter"""
+        if "Peta Konflik Dokter" in wb.sheetnames:
+            del wb["Peta Konflik Dokter"]
+        
+        ws = wb.create_sheet("Peta Konflik Dokter")
+        
+        # Get unique doctors
+        doctors = sorted(df_grid["DOKTER"].unique()) if df_grid is not None and not df_grid.empty else []
+        
+        if not doctors:
+            ws.append(["Tidak ada data dokter"])
+            return ws
+        
+        # Header row
+        header = ["SLOT"] + doctors
+        ws.append(header)
+        
+        # Data rows
+        for slot in slot_str:
+            row = [slot]
+            for _ in doctors:
+                row.append("")  # Placeholder
+            ws.append(row)
+        
+        # Fill conflict data
+        if df_grid is not None and not df_grid.empty:
+            for (dokter, hari), group in df_grid.groupby(["DOKTER", "HARI"]):
+                if dokter in doctors:
+                    col_idx = doctors.index(dokter) + 2  # +1 untuk header, +1 untuk 1-based indexing
+                    
+                    for slot in slot_str:
+                        if slot in group.columns:
+                            row_idx = slot_str.index(slot) + 2  # +1 untuk header, +1 untuk 1-based indexing
+                            cell = ws.cell(row=row_idx, column=col_idx)
+                            
+                            values = group[slot].unique()
+                            
+                            if len(values) > 1 and any(v in ["R", "E"] for v in values):
+                                cell.value = "⚠️"
+                                cell.fill = self.fill_conflict
+                                cell.alignment = self.align_center
+                            
+                            if "R" in values and "E" in values:
+                                cell.value = "🚨"
+                                cell.fill = self.fill_conflict_hard
+                                cell.alignment = self.align_center
+        
+        # Style
+        self._style_conflict_map_sheet(ws, len(doctors))
+        
+        return ws
+    
+    def _create_grafik_poli_sheet(self, wb, df_grid):
+        """Buat sheet Grafik Poli"""
+        if "Grafik Poli" in wb.sheetnames:
+            del wb["Grafik Poli"]
+        
+        ws = wb.create_sheet("Grafik Poli")
+        
+        # Coba ambil data dari Rekap Poli
+        chart_data = []
+        
+        if "Rekap Poli" in wb.sheetnames:
+            try:
+                rp_ws = wb["Rekap Poli"]
+                
+                # Kumpulkan total per poli (abaikan baris TOTAL)
+                poli_totals = {}
+                for row in rp_ws.iter_rows(min_row=2, max_col=5, values_only=True):
+                    if row and row[0] and row[0] != "TOTAL" and row[4] is not None:
+                        poli = str(row[0]).strip()
+                        total = float(row[4]) if isinstance(row[4], (int, float)) else 0
+                        poli_totals[poli] = poli_totals.get(poli, 0) + total
+                
+                # Konversi ke list untuk chart
+                for poli, total in sorted(poli_totals.items(), key=lambda x: x[1], reverse=True):
+                    chart_data.append([poli, total])
+                
+            except Exception as e:
+                print(f"⚠️ Error extracting chart data: {e}")
+        
+        # Jika tidak ada data, buat dummy
+        if not chart_data:
+            chart_data = [
+                ["Poli Anak", 24.5],
+                ["Poli Dalam", 18.2],
+                ["Poli Bedah", 15.8],
+                ["Poli Jantung", 12.3],
+                ["Poli Lainnya", 8.7]
+            ]
+        
+        # Write data
+        ws.append(["POLI", "TOTAL JAM"])
+        for data in chart_data:
+            ws.append(data)
+        
+        # Create chart jika ada data
+        if len(chart_data) > 0:
+            try:
+                chart = BarChart()
+                chart.title = "Beban Poli (Total Jam)"
+                chart.style = 10
+                chart.y_axis.title = "Total Jam"
+                chart.x_axis.title = "Poli"
+                chart.height = 15
+                chart.width = 25
+                
+                data = Reference(ws, min_col=2, min_row=1, max_row=ws.max_row)
+                categories = Reference(ws, min_col=1, min_row=2, max_row=ws.max_row)
+                
+                chart.add_data(data, titles_from_data=True)
+                chart.set_categories(categories)
+                
+                # Tambahkan chart ke sheet
+                ws.add_chart(chart, "E5")
+                
+            except Exception as e:
+                print(f"⚠️ Could not create chart: {e}")
+        
+        # Style
+        self._style_chart_sheet(ws)
+        
+        return ws
+    
+    def _create_summary_sheet(self, wb, df_grid, slot_str):
+        """Buat sheet Summary dengan statistik"""
+        if "Summary" in wb.sheetnames:
+            del wb["Summary"]
+        
+        ws = wb.create_sheet("Summary")
+        
+        # Title
+        ws.merge_cells("A1:D1")
+        title_cell = ws["A1"]
+        title_cell.value = "SUMMARY JADWAL DOKTER"
+        title_cell.font = Font(bold=True, size=16, color="366092")
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        # Statistics
+        stats = self._calculate_statistics(df_grid, slot_str)
+        
+        ws.append([])  # Empty row
+        ws.append(["STATISTIK", "", "", ""])
+        ws.append(["Total Baris Data", stats["total_rows"], "", ""])
+        ws.append(["Total Dokter Unik", stats["total_doctors"], "", ""])
+        ws.append(["Total Poli Unik", stats["total_poli"], "", ""])
+        ws.append(["Total Slot Waktu", stats["total_slots"], "", ""])
+        ws.append(["Slot Reguler (R)", stats["total_r"], f"{stats['total_r'] / stats['total_slots'] * 100:.1f}%" if stats['total_slots'] > 0 else "0%", ""])
+        ws.append(["Slot Poleks (E)", stats["total_e"], f"{stats['total_e'] / stats['total_slots'] * 100:.1f}%" if stats['total_slots'] > 0 else "0%", ""])
+        ws.append(["Slot Kosong", stats["total_empty"], f"{stats['total_empty'] / stats['total_slots'] * 100:.1f}%" if stats['total_slots'] > 0 else "0%", ""])
+        ws.append(["Persentase Terisi", f"{stats['fill_percentage']:.1f}%", "", ""])
+        
+        # Configuration
+        ws.append([])  # Empty row
+        ws.append(["KONFIGURASI", "", "", ""])
+        ws.append(["Jam Mulai", f"{self.config.start_hour:02d}:{self.config.start_minute:02d}", "", ""])
+        ws.append(["Interval Slot", f"{self.config.interval_minutes} menit", "", ""])
+        ws.append(["Maks Poleks/Slot", self.config.max_poleks_per_slot, "", ""])
+        ws.append(["Auto Fix Errors", "Ya" if self.config.auto_fix_errors else "Tidak", "", ""])
+        ws.append(["Hari Sabtu", "Aktif" if self.config.enable_sabtu else "Nonaktif", "", ""])
+        
+        # Poleks overload warning
+        if df_grid is not None and not df_grid.empty:
+            overload_count = self._count_poleks_overload(df_grid, slot_str)
+            if overload_count > 0:
+                ws.append([])
+                ws.append(["PERINGATAN", f"{overload_count} slot Poleks melebihi batas!", "", ""])
+        
+        # Sheet list
+        ws.append([])  # Empty row
+        ws.append(["DAFTAR SHEET", "", "", ""])
+        for i, sheet_name in enumerate(wb.sheetnames, 1):
+            ws.append([f"{i}.", sheet_name, "", ""])
+        
+        # Timestamp
+        ws.append([])  # Empty row
+        ws.append(["Dibuat pada", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", ""])
+        ws.append(["Aplikasi", "Sistem Jadwal Dokter v1.0", "", ""])
+        
+        # Style
+        self._style_summary_sheet(ws)
+        
+        return ws
+    
+    def _count_poleks_overload(self, df_grid, slot_str):
+        """Hitung berapa banyak slot yang melebihi batas poleks"""
+        overload_count = 0
+        
+        if df_grid is None or df_grid.empty:
+            return overload_count
+        
+        for hari in df_grid["HARI"].unique():
+            hari_data = df_grid[df_grid["HARI"] == hari]
+            
+            for slot in slot_str:
+                if slot in hari_data.columns:
+                    e_count = (hari_data[slot] == "E").sum()
+                    if e_count > self.max_e:
+                        overload_count += 1
+        
+        return overload_count
+    
+    # ======================================================
+    # STYLING METHODS UNTUK SHEET LAIN
+    # ======================================================
+    
+    def _style_rekap_sheet(self, ws):
+        """Style sheet rekap"""
+        if ws.max_row <= 1:
+            return
+        
+        # Header
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.fill = self.fill_header
+            cell.font = self.font_header
+            cell.alignment = self.align_center
+            cell.border = self.thin_border
+        
+        # Data rows
+        for row in range(2, ws.max_row + 1):
+            for col in range(1, ws.max_column + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.border = self.thin_border
+                
+                # Align numeric columns to right
+                if col >= 3 and cell.value is not None:
+                    try:
+                        # Coba konversi ke float
+                        if isinstance(cell.value, str) and '%' in cell.value:
+                            cell.alignment = self.align_right
+                        else:
+                            float(str(cell.value).replace('%', ''))
+                            cell.alignment = self.align_right
+                            if isinstance(cell.value, (int, float)):
+                                cell.number_format = '#,##0.00'
+                    except (ValueError, TypeError):
+                        cell.alignment = self.align_left
+                else:
+                    cell.alignment = self.align_left
+            
+            # Alternate row colors
+            if row % 2 == 0:
+                for col in range(1, ws.max_column + 1):
+                    ws.cell(row=row, column=col).fill = self.fill_gray
+    
+    def _style_conflict_sheet(self, ws):
+        """Style conflict sheet"""
+        self._style_rekap_sheet(ws)
+        
+        # Highlight conflict rows berdasarkan tingkat
+        for row in range(2, ws.max_row + 1):
+            tingkat_cell = ws.cell(row=row, column=5)  # Column E = TINGKAT
+            tingkat = tingkat_cell.value if tingkat_cell.value else ""
+            
+            if "TINGGI" in str(tingkat).upper():
+                fill_color = PatternFill("solid", fgColor="FFC7CE")  # Merah muda
+            elif "SEDANG" in str(tingkat).upper():
+                fill_color = PatternFill("solid", fgColor="FFE699")  # Kuning muda
+            elif "RENDAH" in str(tingkat).upper():
+                fill_color = PatternFill("solid", fgColor="C6EFCE")  # Hijau muda
+            else:
+                continue
+            
+            for col in range(1, ws.max_column + 1):
+                ws.cell(row=row, column=col).fill = fill_color
+    
+    def _style_conflict_map_sheet(self, ws, num_doctors):
+        """Style conflict map sheet"""
+        if ws.max_row <= 1:
+            return
+        
+        # Header
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.fill = self.fill_header
+            cell.font = self.font_header
+            cell.alignment = self.align_center
+            cell.border = self.thick_border
+        
+        # Slot column (kolom pertama)
+        for row in range(2, ws.max_row + 1):
+            cell = ws.cell(row=row, column=1)
+            cell.font = self.font_bold
+            cell.alignment = self.align_center
+            cell.border = self.thin_border
+        
+        # Doctor columns
+        for row in range(2, ws.max_row + 1):
+            for col in range(2, min(ws.max_column + 1, num_doctors + 2)):
+                cell = ws.cell(row=row, column=col)
+                cell.alignment = self.align_center
+                cell.border = self.thin_border
+                
+                # Style untuk sel dengan konflik
+                if cell.value in ["⚠️", "🚨"]:
+                    cell.font = Font(size=12, bold=True)
+    
+    def _style_chart_sheet(self, ws):
+        """Style chart sheet"""
+        if ws.max_row <= 1:
+            return
+        
+        # Header
+        for col in range(1, 3):  # Hanya 2 kolom
+            cell = ws.cell(row=1, column=col)
+            cell.fill = self.fill_header
+            cell.font = self.font_header
+            cell.alignment = self.align_center
+            cell.border = self.thin_border
+        
+        # Data
+        for row in range(2, ws.max_row + 1):
+            for col in range(1, 3):
+                cell = ws.cell(row=row, column=col)
+                cell.border = self.thin_border
+                cell.alignment = self.align_left if col == 1 else self.align_right
+        
+        # Alternate rows
+        for row in range(2, ws.max_row + 1):
+            if row % 2 == 0:
+                for col in range(1, 3):
+                    ws.cell(row=row, column=col).fill = self.fill_gray
+    
+    def _style_summary_sheet(self, ws):
+        """Style summary sheet"""
+        if ws.max_row <= 1:
+            return
+        
+        # Beri border pada semua sel
+        for row in range(1, ws.max_row + 1):
+            for col in range(1, 5):  # Hanya 4 kolom
+                cell = ws.cell(row=row, column=col)
+                cell.border = self.thin_border
+        
+        # Style title
+        title_cell = ws["A1"]
+        title_cell.fill = PatternFill("solid", fgColor="4F81BD")
+        
+        # Style section headers
+        section_rows = [3, 14, 22]  # Row numbers dengan section headers
+        for row in section_rows:
+            if row <= ws.max_row:
+                cell = ws.cell(row=row, column=1)
+                cell.fill = PatternFill("solid", fgColor="D9E1F2")
+                cell.font = Font(bold=True, size=11)
+        
+        # Style data rows
+        for row in range(1, ws.max_row + 1):
+            cell1 = ws.cell(row=row, column=1)
+            cell2 = ws.cell(row=row, column=2)
+            
+            cell1.alignment = self.align_left
+            cell2.alignment = self.align_left
+            
+            # Bold untuk statistik penting
+            if row in [4, 5, 6, 10, 11, 12]:
+                cell1.font = self.font_bold
+                cell2.font = self.font_bold
+        
+        # Merge cells untuk title
+        ws.merge_cells("A1:D1")
+    
+    def _apply_styling_to_all_sheets(self, wb):
+        """Apply basic styling to all sheets"""
+        for ws in wb.worksheets:
+            # Set default font untuk semua sel
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.font is None or cell.font.name == 'Calibri':
+                        cell.font = self.font_normal
+    
+    def _auto_adjust_column_widths(self, wb):
+        """Auto adjust column widths untuk semua sheets"""
+        for ws in wb.worksheets:
+            for column in ws.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                
+                for cell in column:
+                    try:
+                        if cell.value:
+                            # Hitung panjang string
+                            cell_length = len(str(cell.value))
+                            if cell_length > max_length:
+                                max_length = cell_length
+                    except:
+                        pass
+                
+                # Adjust width (min 10, max 50)
+                adjusted_width = min(max(max_length + 2, 10), 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+    
+    def _reorder_sheets(self, wb):
+        """Reorder sheets untuk UX yang lebih baik"""
+        desired_order = [
+            "Summary",
+            "Jadwal", 
+            "Rekap Layanan",
+            "Rekap Poli",
+            "Rekap Dokter",
+            "Peak Hour Analysis",
+            "Conflict Dokter",
+            "Peta Konflik Dokter",
+            "Grafik Poli"
+        ]
+        
+        # Hanya reorder sheets yang ada
+        existing_sheets = [s for s in desired_order if s in wb.sheetnames]
+        
+        # Pindahkan sheets ke posisi yang diinginkan
+        for i, sheet_name in enumerate(existing_sheets):
+            ws = wb[sheet_name]
+            wb.move_sheet(ws, offset=-len(wb.sheetnames) + i)
+    
+    # ======================================================
+    # HELPER METHODS
+    # ======================================================
+    
+    def _combine_slots_to_ranges(self, slots, slot_str):
+        """Gabungkan slot menjadi range waktu"""
+        if not slots:
+            return []
+        
+        try:
+            # Pastikan slots ada dalam slot_str
+            valid_slots = [s for s in slots if s in slot_str]
+            if not valid_slots:
+                return slots
+            
+            # Urutkan berdasarkan posisi di slot_str
+            valid_slots.sort(key=lambda x: slot_str.index(x))
+            
+            ranges = []
+            start = valid_slots[0]
+            end = valid_slots[0]
+            
+            for i in range(1, len(valid_slots)):
+                current_idx = slot_str.index(valid_slots[i])
+                prev_idx = slot_str.index(end)
+                
+                # Cek jika berurutan
+                if current_idx == prev_idx + 1:
+                    end = valid_slots[i]
+                else:
+                    if start == end:
+                        ranges.append(start)
+                    else:
+                        ranges.append(f"{start}-{end}")
+                    
+                    start = valid_slots[i]
+                    end = valid_slots[i]
+            
+            # Tambahkan range terakhir
+            if start == end:
+                ranges.append(start)
+            else:
+                ranges.append(f"{start}-{end}")
+            
+            return ranges
+            
+        except Exception as e:
+            print(f"⚠️ Error combining slots: {e}")
+            return slots
+    
+    def _calculate_duration(self, time_range, slot_str):
+        """Hitung durasi dalam jam dari range waktu"""
+        try:
+            if '-' in time_range:
+                start_str, end_str = time_range.split('-')
+                
+                if start_str in slot_str and end_str in slot_str:
+                    start_idx = slot_str.index(start_str)
+                    end_idx = slot_str.index(end_str)
+                    num_slots = end_idx - start_idx + 1
+                    return num_slots * self.interval / 60
+            
+            # Fallback: single slot
+            return self.interval / 60
+            
+        except:
+            return 0
+    
+    def _find_doctor_conflicts(self, df_grid, slot_str):
+        """Temukan konflik dokter"""
+        conflicts = []
+        
+        if df_grid is None or df_grid.empty:
+            return conflicts
+        
+        try:
+            for (dokter, hari), group in df_grid.groupby(["DOKTER", "HARI"]):
+                if len(group) > 1:  # Dokter muncul di >1 poli di hari yang sama
+                    for slot in slot_str:
+                        if slot in group.columns:
+                            active_rows = group[group[slot].isin(["R", "E"])]
+                            
+                            if len(active_rows) > 1:
+                                active_polis = active_rows["POLI"].tolist()
+                                
+                                # Cek untuk konflik R vs E
+                                has_r = any(active_rows[slot] == "R")
+                                has_e = any(active_rows[slot] == "E")
+                                
+                                if has_r and has_e:
+                                    tingkat = "TINGGI"
+                                    keterangan = f"Bentrok Reguler & Poleks"
+                                else:
+                                    tingkat = "SEDANG"
+                                    keterangan = f"{len(active_polis)} poli bersamaan"
+                                
+                                conflicts.append({
+                                    "dokter": dokter,
+                                    "hari": hari,
+                                    "slot": slot,
+                                    "keterangan": keterangan,
+                                    "tingkat": tingkat
+                                })
+        except Exception as e:
+            print(f"⚠️ Error finding conflicts: {e}")
+        
+        return conflicts
+    
+    def _calculate_statistics(self, df_grid, slot_str):
+        """Hitung statistik untuk summary"""
+        stats = {
+            "total_rows": 0,
+            "total_doctors": 0,
+            "total_poli": 0,
+            "total_slots": 0,
+            "total_r": 0,
+            "total_e": 0,
+            "total_empty": 0,
+            "fill_percentage": 0
+        }
+        
+        if df_grid is not None and not df_grid.empty:
+            stats["total_rows"] = len(df_grid)
+            stats["total_doctors"] = df_grid["DOKTER"].nunique()
+            stats["total_poli"] = df_grid["POLI"].nunique()
+            
+            total_cells = len(df_grid) * len(slot_str)
+            stats["total_slots"] = total_cells
+            
+            # Hitung R dan E
+            for slot in slot_str:
+                if slot in df_grid.columns:
+                    stats["total_r"] += (df_grid[slot] == "R").sum()
+                    stats["total_e"] += (df_grid[slot] == "E").sum()
+            
+            stats["total_empty"] = total_cells - stats["total_r"] - stats["total_e"]
+            
+            if total_cells > 0:
+                stats["fill_percentage"] = ((stats["total_r"] + stats["total_e"]) / total_cells) * 100
+        
+        return stats
+    
+    # ======================================================
+    # TEMPLATE GENERATOR
+    # ======================================================
+    
+    def generate_template(self, slot_str=None):
+        """
+        Generate template Excel file untuk input
+        
+        Returns:
+            BytesIO buffer berisi template Excel
+        """
+        print("📄 Generating template Excel...")
+        
+        try:
+            wb = Workbook()
+            
+            # Remove default sheet
+            if "Sheet" in wb.sheetnames:
+                del wb["Sheet"]
+            
+            # Generate slot strings jika tidak provided
+            if slot_str is None:
+                from datetime import time
+                slot_str = []
+                current_time = self.config.start_hour * 60 + self.config.start_minute
+                end_time = 14 * 60 + 30  # 14:30
+                
+                while current_time < end_time:
+                    hours = current_time // 60
+                    minutes = current_time % 60
+                    time_str = f"{hours:02d}:{minutes:02d}"
+                    slot_str.append(time_str)
+                    current_time += self.config.interval_minutes
+            
+            # Create Reguler sheet
+            ws_reg = wb.create_sheet("Reguler")
+            self._create_template_sheet(ws_reg, "Reguler", slot_str)
+            
+            # Create Poleks sheet
+            ws_pol = wb.create_sheet("Poleks")
+            self._create_template_sheet(ws_pol, "Poleks", slot_str)
+            
+            # Create Instructions sheet
+            ws_inst = wb.create_sheet("Instruksi")
+            self._create_instructions_sheet(ws_inst)
+            
+            # Apply styling
+            self._apply_styling_to_all_sheets(wb)
+            self._auto_adjust_column_widths(wb)
+            
+            # Reorder sheets
+            self._reorder_sheets(wb)
+            
+            # Save to buffer
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            
+            file_size = buf.getbuffer().nbytes
+            print(f"✅ Template created: {file_size:,} bytes")
+            return buf
+            
+        except Exception as e:
+            print(f"❌ Error generating template: {e}")
+            print(traceback.format_exc())
+            
+            # Fallback template sederhana
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Template"
+            ws.append(["Nama Dokter", "Poli Asal", "Senin", "Selasa", "Rabu", "Kamis", "Jum'at"])
+            ws.append(["dr. Contoh", "Poli Anak", "08.00-10.00", "09.00-11.00", "", "10.00-12.00", "08.00-10.00"])
+            
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            return buf
+    
+    def _create_template_sheet(self, ws, jenis, slot_str):
+        """Buat sheet template untuk Reguler atau Poleks"""
+        # Header
+        headers = ["Nama Dokter", "Poli Asal", "Jenis Poli", "Senin", "Selasa", "Rabu", "Kamis", "Jum'at"]
+        
+        if self.config.enable_sabtu:
+            headers.append("Sabtu")
+        
+        ws.append(headers)
+        
+        # Example data
+        examples = [
+            ["dr. Contoh Satu", "Poli Anak", jenis, "08.00-10.00", "09.00-11.00", "", "10.00-12.00", "08.00-10.00"],
+            ["dr. Contoh Dua", "Poli Dalam", jenis, "10.00-12.00", "", "08.00-10.00", "09.00-11.00", ""],
+        ]
+        
+        if self.config.enable_sabtu:
+            for ex in examples:
+                ex.append("")  # Add empty Sabtu column
+        
+        for example in examples:
+            ws.append(example)
+        
+        # Notes
+        notes_row = len(examples) + 2
+        ws.cell(row=notes_row, column=1, value="CATATAN:")
+        ws.cell(row=notes_row + 1, column=1, value="1. Format waktu: '07.30-10.00' atau '07:30-10:00'")
+        ws.cell(row=notes_row + 2, column=1, value="2. Kosongkan jika tidak ada jadwal")
+        ws.cell(row=notes_row + 3, column=1, value="3. Jenis Poli akan otomatis terisi")
+        
+        # Style header
+        for col in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.fill = self.fill_header
+            cell.font = self.font_header
+            cell.alignment = self.align_center
+        
+        # Style example rows
+        for row in range(2, 4):
+            for col in range(1, len(headers) + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.border = self.thin_border
+        
+        ws.freeze_panes = "D2"
+    
+    def _create_instructions_sheet(self, ws):
+        """Buat sheet instruksi"""
+        instructions = [
+            "PETUNJUK PENGGUNAAN",
+            "",
+            "1. FILE INPUT:",
+            "   - File Excel harus memiliki 2 sheet: 'Reguler' dan 'Poleks'",
+            "   - Format kolom harus sama seperti di template",
+            "",
+            "2. FORMAT WAKTU:",
+            "   - Gunakan format: '07.30-10.00' atau '07:30-10:00'",
+            "   - Bisa menggunakan titik atau titik dua",
+            "   - Kosongkan sel jika tidak ada jadwal",
+            "",
+            "3. KOLOM WAJIB:",
+            "   - Nama Dokter: Nama lengkap dokter",
+            "   - Poli Asal: Nama poli",
+            "   - Jenis Poli: Akan otomatis terisi",
+            "   - Kolom hari: Senin sampai Jum'at",
+            "",
+            "4. PROSES:",
+            "   - Upload file di tab 'Upload & Proses'",
+            "   - Klik 'Proses Jadwal' untuk konversi",
+            "   - Download hasil di file Excel lengkap",
+            "",
+            "5. OUTPUT:",
+            "   - File hasil berisi 10+ sheet dengan analisis lengkap",
+            "   - Termasuk deteksi konflik dan statistik",
+            "",
+            "6. WARNA PADA SHEET JADWAL:",
+            "   - HIJAU: Jadwal Reguler (R)",
+            "   - BIRU: Jadwal Poleks dalam batas",
+            "   - MERAH: Jadwal Poleks melebihi batas",
+            "",
+            "© 2024 Sistem Jadwal Dokter"
+        ]
+        
+        for i, line in enumerate(instructions, start=1):
+            ws.cell(row=i, column=1, value=line)
+            if line.startswith(("1.", "2.", "3.", "4.", "5.", "6.")):
+                ws.cell(row=i, column=1).font = Font(bold=True)
+        
+        # Title style
+        title_cell = ws["A1"]
+        title_cell.font = Font(bold=True, size=14, color="366092")
+        
+        ws.column_dimensions['A'].width = 80
