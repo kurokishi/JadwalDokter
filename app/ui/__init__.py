@@ -1,19 +1,18 @@
 """
-Package UI - komponen Streamlit untuk aplikasi Jadwal Dokter
+UI components module
 """
-
-from .home import render as render_home
-from .tab_upload import render as render_upload
-from .tab_schedule import render as render_schedule
-from .tab_kanban_drag import render as render_kanban
-from .tab_preferences import render as render_preferences
-from .tab_about import render as render_about
+from app.ui.home import display_home_tab
+from app.ui.tab_upload import display_upload_tab
+from app.ui.tab_schedule import display_schedule_tab
+from app.ui.tab_kanban_drag import display_kanban_tab
+from app.ui.tab_preferences import display_preferences_tab
+from app.ui.tab_about import display_about_tab
 
 __all__ = [
-    'render_home',
-    'render_upload', 
-    'render_schedule',
-    'render_kanban',
-    'render_preferences',
-    'render_about'
+    'display_home_tab',
+    'display_upload_tab',
+    'display_schedule_tab',
+    'display_kanban_tab',
+    'display_preferences_tab',
+    'display_about_tab'
 ]
