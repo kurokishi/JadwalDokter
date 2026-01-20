@@ -14,7 +14,6 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from app.config import AppConfig
-from app.utils.parser import JadwalHafisParser
 
 # Import UI components
 from app.ui.home import display_home_tab
