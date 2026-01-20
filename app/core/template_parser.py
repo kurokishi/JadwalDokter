@@ -7,45 +7,13 @@ from datetime import datetime, time, date
 from typing import Dict, List, Any, Optional, Tuple
 import re
 import io
-from ..config import config
 from ..utils import parse_time
 
 class TemplateParser:
     """Parser untuk berbagai format template jadwal"""
     
-    # Template patterns untuk berbagai format
-    TEMPLATE_PATTERNS = {
-        'standard': {
-            'required': ['nama_dokter', 'spesialisasi', 'hari', 'jam_mulai', 'jam_selesai'],
-            'optional': ['ruangan', 'poliklinik', 'kapasitas', 'catatan'],
-            'aliases': {
-                'dokter': 'nama_dokter',
-                'doctor': 'nama_dokter',
-                'specialization': 'spesialisasi',
-                'day': 'hari',
-                'start': 'jam_mulai',
-                'end': 'jam_selesai',
-                'start_time': 'jam_mulai',
-                'end_time': 'jam_selesai',
-                'room': 'ruangan',
-                'clinic': 'poliklinik',
-                'capacity': 'kapasitas',
-                'notes': 'catatan'
-            }
-        },
-        'simple': {
-            'required': ['dokter', 'hari', 'jam'],
-            'aliases': {
-                'doctor': 'dokter',
-                'day': 'hari',
-                'time': 'jam'
-            }
-        }
-    }
-    
     def __init__(self, template_type: str = 'standard'):
         self.template_type = template_type
-        self.pattern = self.TEMPLATE_PATTERNS.get(template_type, self.TEMPLATE_PATTERNS['standard'])
     
     def parse_file(self, file_content: bytes, filename: str) -> Tuple[pd.DataFrame, List[str]]:
         """Parse file upload"""
@@ -62,10 +30,6 @@ class TemplateParser:
             # Standardize column names
             df = self._standardize_columns(df)
             
-            # Validate template structure
-            is_valid, validation_warnings = self._validate_template_structure(df)
-            warnings.extend(validation_warnings)
-            
             # Parse waktu jika dalam format yang berbeda
             df = self._parse_time_columns(df)
             
@@ -81,43 +45,7 @@ class TemplateParser:
         # Lowercase semua nama kolom dan hapus spasi
         df_clean.columns = [str(col).strip().lower().replace(' ', '_') for col in df_clean.columns]
         
-        # Apply aliases
-        column_mapping = {}
-        for col in df_clean.columns:
-            standardized = self._standardize_column_name(col)
-            if standardized:
-                column_mapping[col] = standardized
-        
-        df_clean = df_clean.rename(columns=column_mapping)
-        
         return df_clean
-    
-    def _standardize_column_name(self, column_name: str) -> Optional[str]:
-        """Standardisasi nama kolom berdasarkan aliases"""
-        # Cek di aliases
-        for alias, standard in self.pattern.get('aliases', {}).items():
-            if alias in column_name.lower():
-                return standard
-        
-        # Jika tidak ditemukan di aliases, kembalikan aslinya
-        return column_name
-    
-    def _validate_template_structure(self, df: pd.DataFrame) -> Tuple[bool, List[str]]:
-        """Validasi struktur template"""
-        warnings = []
-        
-        required_cols = self.pattern.get('required', [])
-        missing_cols = []
-        
-        for col in required_cols:
-            if col not in df.columns:
-                missing_cols.append(col)
-        
-        if missing_cols:
-            warnings.append(f"Kolom yang diperlukan tidak ditemukan: {', '.join(missing_cols)}")
-            return False, warnings
-        
-        return True, warnings
     
     def _parse_time_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """Parse kolom waktu"""
@@ -199,37 +127,6 @@ class TemplateParser:
             return single_time.strftime("%H:%M"), end_time.strftime("%H:%M")
         
         return "", ""
-    
-    def detect_template_type(self, df: pd.DataFrame) -> str:
-        """Deteksi tipe template berdasarkan kolom yang ada"""
-        columns = set(df.columns.str.lower())
-        
-        for template_name, pattern in self.TEMPLATE_PATTERNS.items():
-            required = set(pattern.get('required', []))
-            if required.issubset(columns):
-                return template_name
-        
-        # Cek dengan aliases
-        for template_name, pattern in self.TEMPLATE_PATTERNS.items():
-            required = pattern.get('required', [])
-            aliases = pattern.get('aliases', {})
-            
-            # Check jika required columns ada atau ada aliasesnya
-            found_count = 0
-            for req_col in required:
-                if req_col in columns:
-                    found_count += 1
-                else:
-                    # Cek aliases
-                    for alias, standard in aliases.items():
-                        if standard == req_col and alias in columns:
-                            found_count += 1
-                            break
-            
-            if found_count >= len(required) * 0.8:  # 80% match
-                return template_name
-        
-        return 'unknown'
     
     def create_sample_template(self, template_type: str = 'standard') -> pd.DataFrame:
         """Buat template sample"""
