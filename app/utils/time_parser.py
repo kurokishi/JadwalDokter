@@ -3,13 +3,13 @@ Time parsing utilities
 """
 import re
 from datetime import time, datetime
-from typing import Optional, Tuple
+import pandas as pd
 
 class TimeParser:
     """Time parsing utility class"""
     
     @staticmethod
-    def parse_time(time_str: str) -> Optional[time]:
+    def parse_time(time_str: str):
         """Parse time string to datetime.time object"""
         if not time_str or pd.isna(time_str):
             return None
@@ -44,7 +44,7 @@ class TimeParser:
         return None
     
     @staticmethod
-    def parse_time_range(time_range_str: str) -> Optional[Tuple[time, time]]:
+    def parse_time_range(time_range_str: str):
         """Parse time range string to start and end times"""
         if not time_range_str:
             return None
