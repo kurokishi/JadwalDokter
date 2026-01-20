@@ -3,7 +3,6 @@ Template parsing utilities
 """
 import pandas as pd
 import json
-from typing import Dict, List, Any
 
 class TemplateParser:
     """Template parsing utility class"""
@@ -45,7 +44,7 @@ class TemplateParser:
             raise ValueError("Unsupported file format. Use .xlsx or .csv")
     
     @staticmethod
-    def validate_template(template_df: pd.DataFrame) -> Tuple[bool, List[str]]:
+    def validate_template(template_df: pd.DataFrame):
         """Validate template structure"""
         errors = []
         
