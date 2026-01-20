@@ -6,8 +6,6 @@ import pandas as pd
 import tempfile
 import os
 from app.utils.parser import JadwalHafisParser
-from app.utils.validator import DataValidator
-from app.utils.cleaner import DataCleaner
 from app.config import AppConfig
 
 def display_upload_tab():
@@ -50,40 +48,18 @@ def display_upload_tab():
         # Show data info
         show_data_preview(df)
         
-        # Data cleaning options
+        # Data cleaning options (simplified)
         with st.expander("🧹 Data Cleaning Options"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("Clean Doctor Names"):
-                    df = DataCleaner.clean_doctor_names(df)
-                    st.session_state.data = df
-                    st.success("Doctor names cleaned!")
-                    st.rerun()
-            
-            with col2:
-                if st.button("Clean Specialty Names"):
-                    df = DataCleaner.clean_specialty_names(df)
-                    st.session_state.data = df
-                    st.success("Specialty names cleaned!")
-                    st.rerun()
-            
-            if st.button("Remove Duplicates"):
-                df = DataCleaner.remove_duplicates(df)
+            if st.button("Clean Data"):
+                # Simple cleaning
+                if 'doctor_name' in df.columns:
+                    df['doctor_name'] = df['doctor_name'].astype(str).str.strip()
+                if 'specialty' in df.columns:
+                    df['specialty'] = df['specialty'].astype(str).str.strip()
+                
                 st.session_state.data = df
-                st.success(f"Duplicates removed! {len(df)} records remaining")
+                st.success("Data cleaned!")
                 st.rerun()
-        
-        # Validation
-        with st.expander("✅ Data Validation"):
-            is_valid, errors = DataValidator.validate_dataframe(df)
-            
-            if is_valid:
-                st.success("Data is valid!")
-            else:
-                st.error("Data validation failed:")
-                for error in errors:
-                    st.write(f"• {error}")
     
     # Template download
     st.divider()
@@ -127,8 +103,8 @@ def parse_uploaded_file(uploaded_file, is_hafis_format: bool = False):
                     
                     st.success("✅ File berhasil diunggah!")
                 
-                # Clean data
-                df = DataCleaner.fill_missing_values(df)
+                # Basic cleaning
+                df = df.fillna('')
                 
                 # Store in session state
                 st.session_state.data = df
@@ -162,9 +138,11 @@ def show_data_preview(df: pd.DataFrame):
     with col1:
         st.metric("Total Records", len(df))
     with col2:
-        st.metric("Unique Doctors", len(df['doctor_name'].unique()))
+        doctors = len(df['doctor_name'].unique()) if 'doctor_name' in df.columns else 0
+        st.metric("Unique Doctors", doctors)
     with col3:
-        st.metric("Specialties", len(df['specialty'].unique()))
+        specialties = len(df['specialty'].unique()) if 'specialty' in df.columns else 0
+        st.metric("Specialties", specialties)
     with col4:
         days = len(df['day'].unique()) if 'day' in df.columns else 0
         st.metric("Days", days)
@@ -185,18 +163,6 @@ def show_data_preview(df: pd.DataFrame):
             'Unique Values': [df[col].nunique() for col in df.columns]
         })
         st.dataframe(col_info, use_container_width=True)
-    
-    # Quick analysis
-    with st.expander("📊 Quick Analysis"):
-        if 'specialty' in df.columns:
-            st.write("**Doctors per Specialty:**")
-            specialty_counts = df['specialty'].value_counts()
-            st.bar_chart(specialty_counts)
-        
-        if 'day' in df.columns:
-            st.write("**Schedule Distribution by Day:**")
-            day_counts = df['day'].value_counts()
-            st.bar_chart(day_counts)
 
 def create_template_download():
     """Create and download template file"""
