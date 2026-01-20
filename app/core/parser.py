@@ -8,13 +8,12 @@ from typing import Dict, List, Any, Optional, Tuple
 import re
 from ..config import config, TimeSlot
 from ..utils import parse_time, calculate_duration
-from .template_parser import TemplateParser
 
 class ScheduleParser:
     """Class untuk parsing dan transformasi data jadwal"""
     
     def __init__(self):
-        self.template_parser = TemplateParser()
+        pass
     
     def parse_schedule_data(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Parse data jadwal ke dalam format yang terstruktur"""
@@ -41,9 +40,6 @@ class ScheduleParser:
         
         # Generate struktur data terorganisir
         parsed_data.update(self._organize_schedules(schedules))
-        
-        # Generate time slots
-        parsed_data['time_slots'] = self._generate_time_slots(schedules)
         
         # Deteksi konflik
         parsed_data['conflicts'] = self._detect_conflicts(schedules)
@@ -145,23 +141,6 @@ class ScheduleParser:
         
         return organized
     
-    def _generate_time_slots(self, schedules: List[Dict[str, Any]]) -> List[TimeSlot]:
-        """Generate time slots dari semua jadwal"""
-        time_slots = []
-        
-        for schedule in schedules:
-            # Create TimeSlot object
-            slot = TimeSlot(
-                start=schedule['start_time'],
-                end=schedule['end_time'],
-                day=schedule['day'],
-                doctor=schedule['doctor'],
-                specialization=schedule['specialization']
-            )
-            time_slots.append(slot)
-        
-        return time_slots
-    
     def _detect_conflicts(self, schedules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Deteksi konflik jadwal"""
         conflicts = []
@@ -239,25 +218,3 @@ class ScheduleParser:
             stats['avg_hours_per_day'] = round(total_hours / stats['total_days'], 2)
         
         return stats
-    
-    def create_schedule_table(self, parsed_data: Dict[str, Any]) -> pd.DataFrame:
-        """Buat DataFrame dari data yang di-parse"""
-        rows = []
-        
-        for schedule in parsed_data['schedules']:
-            row = {
-                'ID': schedule['id'],
-                'Dokter': schedule['doctor'],
-                'Spesialisasi': schedule['specialization'],
-                'Hari': schedule['day'],
-                'Mulai': schedule['start_str'],
-                'Selesai': schedule['end_str'],
-                'Durasi (jam)': schedule['duration'],
-                'Ruangan': schedule.get('room', ''),
-                'Poliklinik': schedule.get('clinic', ''),
-                'Kapasitas': schedule.get('capacity', ''),
-                'Catatan': schedule.get('notes', '')
-            }
-            rows.append(row)
-        
-        return pd.DataFrame(rows)
