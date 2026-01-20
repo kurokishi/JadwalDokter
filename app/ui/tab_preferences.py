@@ -4,6 +4,7 @@ Preferences tab UI component
 import streamlit as st
 import json
 from app.config import AppConfig
+from datetime import datetime  # Add this import
 
 def display_preferences_tab():
     """Display preferences tab content"""
@@ -160,6 +161,3 @@ def display_preferences_tab():
     
     with st.expander("View Current Settings"):
         st.json(st.session_state.preferences)
-
-# Need to import datetime for time parsing
-from datetime import datetime
