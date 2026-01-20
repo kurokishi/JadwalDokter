@@ -1,137 +1,146 @@
 """
-Halaman beranda aplikasi
+Home tab UI component
 """
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-from ..config import config
-from ..utils import show_message, calculate_statistics
-from ..core import DataCleaner, ScheduleParser
+from app.config import AppConfig
 
-def render():
-    """Render halaman beranda"""
-    st.header("🏠 Beranda")
-    st.markdown("Selamat datang di Sistem Penjadwalan Dokter")
+def display_home_tab():
+    """Display home tab content"""
     
-    # Card utama
-    col1, col2, col3, col4 = st.columns(4)
+    # Hero section
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("""
+        <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    border-radius: 10px; color: white; margin-bottom: 2rem;">
+            <h1 style="font-size: 2.5rem; margin-bottom: 1rem;">🏥 Jadwal Dokter RS</h1>
+            <p style="font-size: 1.2rem;">Aplikasi Manajemen Jadwal Dokter Rumah Sakit</p>
+            <p style="font-size: 1rem; opacity: 0.9;">Versi {}</p>
+        </div>
+        """.format(AppConfig.APP_VERSION), unsafe_allow_html=True)
+    
+    # Features
+    st.subheader("✨ Fitur Utama")
+    
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.metric(
-            "Total Dokter",
-            st.session_state.get('total_doctors', 0)
-        )
+        st.markdown("""
+        <div style="padding: 1.5rem; background-color: #f8f9fa; border-radius: 10px; height: 200px;">
+            <h3>📤 Upload Data</h3>
+            <p>Unggah file Excel/CSV termasuk format <strong>jadwal_hafis.xlsx</strong></p>
+            <ul>
+                <li>Support format khusus RS</li>
+                <li>Validasi otomatis</li>
+                <li>Preview data</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.metric(
-            "Total Jadwal",
-            st.session_state.get('total_schedules', 0)
-        )
+        st.markdown("""
+        <div style="padding: 1.5rem; background-color: #f8f9fa; border-radius: 10px; height: 200px;">
+            <h3>📅 Jadwal Dokter</h3>
+            <p>Lihat dan kelola jadwal dokter</p>
+            <ul>
+                <li>Tampilan tabel</li>
+                <li>Filter per hari/spesialis</li>
+                <li>Visualisasi timeline</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        st.metric(
-            "Jam Kerja",
-            f"{st.session_state.get('total_hours', 0):.1f} jam"
-        )
+        st.markdown("""
+        <div style="padding: 1.5rem; background-color: #f8f9fa; border-radius: 10px; height: 200px;">
+            <h3>🧩 Kanban Drag</h3>
+            <p>Sistem penjadwalan drag & drop</p>
+            <ul>
+                <li>Antarmuka visual</li>
+                <li>Drag dokter ke timeslot</li>
+                <li>Simpan perubahan</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
     
-    with col4:
-        conflict_count = len(st.session_state.get('conflicts', []))
-        st.metric(
-            "Konflik",
-            conflict_count,
-            delta="Perlu diperbaiki" if conflict_count > 0 else None,
-            delta_color="inverse" if conflict_count > 0 else "normal"
-        )
+    # Quick start guide
+    st.subheader("🚀 Mulai Cepat")
     
-    st.markdown("---")
+    with st.expander("Panduan Penggunaan", expanded=True):
+        st.markdown("""
+        ### Langkah 1: Upload Data
+        1. Pergi ke tab **"Upload Data"**
+        2. Unggah file Excel/CSV
+        3. Untuk file **jadwal_hafis.xlsx**, system akan otomatis mengenali format
+        
+        ### Langkah 2: Lihat Jadwal
+        1. Pergi ke tab **"Jadwal Dokter"**
+        2. Pilih view yang diinginkan
+        3. Filter berdasarkan hari/spesialisasi
+        
+        ### Langkah 3: Kelola Jadwal
+        1. Gunakan **"Kanban Drag"** untuk penjadwalan visual
+        2. Atur preferensi di **"Preferences"**
+        3. Export data jika diperlukan
+        """)
     
-    # Dua kolom utama
-    col1, col2 = st.columns([2, 1])
+    # File format support
+    st.subheader("📁 Format File yang Didukung")
+    
+    col1, col2 = st.columns(2)
     
     with col1:
-        # Status data
-        st.subheader("📊 Status Data")
-        
-        if 'uploaded_data' in st.session_state and st.session_state.uploaded_data is not None:
-            df = st.session_state.uploaded_data
-            
-            # Tampilkan statistik
-            stats = calculate_statistics(df)
-            
-            st.success("✅ Data Tersedia")
-            st.write(f"**File:** {st.session_state.get('file_name', 'N/A')}")
-            st.write(f"**Waktu Upload:** {st.session_state.get('upload_time', 'N/A')}")
-            st.write(f"**Ukuran Data:** {len(df)} baris × {len(df.columns)} kolom")
-            
-            # Tampilkan preview
-            with st.expander("🔍 Preview Data", expanded=False):
-                st.dataframe(df.head(10), use_container_width=True)
-        
-        else:
-            st.warning("⚠️ Belum Ada Data")
-            st.write("Silakan upload data jadwal dokter terlebih dahulu di tab **📤 Upload Data**")
-            
-            # Quick upload button
-            if st.button("📥 Upload Data Sekarang", type="primary", use_container_width=True):
-                # Switch to upload tab
-                st.session_state.current_view = 'upload'
-                st.rerun()
+        st.markdown("""
+        ### Format Standar
+        ```
+        doctor_name,specialty,day,working_hours
+        Dr. John Doe,Cardiology,Monday,08:00-16:00
+        Dr. Jane Smith,Pediatrics,Tuesday,09:00-17:00
+        ```
+        """)
     
     with col2:
-        # Quick actions
-        st.subheader("🚀 Aksi Cepat")
+        st.markdown("""
+        ### Format jadwal_hafis.xlsx
+        ```
+        KSM | Nama dokter | POLI | SENIN | SELASA | ...
+        Anak | dr. Debby | JAM KERJA | 07:30-14:00 | 07:30-14:00
+          |   | REGULER | [Reference] | [Reference]
+          |   | EKSEKUTIF | 10:30-11:25 | 10:35-11:30
+        ```
+        """)
+    
+    # Stats if data loaded
+    if 'data' in st.session_state and st.session_state.data_loaded:
+        st.subheader("📊 Data Saat Ini")
         
-        # Action buttons
-        if st.button("📋 Lihat Jadwal", use_container_width=True):
-            st.session_state.current_view = 'schedule'
-            st.rerun()
+        df = st.session_state.data
+        col1, col2, col3, col4 = st.columns(4)
         
-        if st.button("🔄 Proses Data", use_container_width=True):
-            if 'uploaded_data' in st.session_state and st.session_state.uploaded_data is not None:
-                with st.spinner("Memproses data..."):
-                    try:
-                        # Process data
-                        cleaner = DataCleaner()
-                        df_clean = cleaner.clean_dataframe(st.session_state.uploaded_data)
-                        
-                        parser = ScheduleParser()
-                        parsed_data = parser.parse_schedule_data(df_clean)
-                        
-                        # Update session state
-                        st.session_state.schedule_data = parsed_data
-                        st.session_state.total_doctors = parsed_data['statistics']['total_doctors']
-                        st.session_state.total_schedules = parsed_data['statistics']['total_schedules']
-                        st.session_state.total_hours = parsed_data['statistics']['total_hours']
-                        st.session_state.conflicts = parsed_data['conflicts']
-                        
-                        show_message("Data berhasil diproses!", "success")
-                        st.rerun()
-                    except Exception as e:
-                        show_message(f"Error processing data: {str(e)}", "error")
-            else:
-                show_message("Tidak ada data untuk diproses", "error")
-        
+        with col1:
+            st.metric("Total Data", len(df))
+        with col2:
+            st.metric("Jumlah Dokter", len(df['doctor_name'].unique()))
+        with col3:
+            st.metric("Spesialisasi", len(df['specialty'].unique()))
+        with col4:
+            days = len(df['day'].unique()) if 'day' in df.columns else 0
+            st.metric("Hari", days)
+    
+    # Quick actions
+    st.subheader("⚡ Aksi Cepat")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📤 Upload Data", use_container_width=True):
+            st.switch_page("run.py")  # This will need adjustment based on navigation
+    
+    with col2:
+        if st.button("📅 Lihat Jadwal", use_container_width=True) and st.session_state.data_loaded:
+            st.switch_page("run.py")
+    
+    with col3:
         if st.button("⚙️ Pengaturan", use_container_width=True):
-            st.session_state.current_view = 'preferences'
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # Recent activity
-        st.subheader("📝 Aktivitas Terbaru")
-        
-        activities = []
-        if st.session_state.get('upload_time'):
-            activities.append(f"📤 Upload data: {st.session_state.upload_time}")
-        
-        if st.session_state.get('conflicts'):
-            activities.append(f"⚠️ {len(st.session_state.conflicts)} konflik terdeteksi")
-        
-        if st.session_state.get('total_schedules', 0) > 0:
-            activities.append(f"📅 {st.session_state.total_schedules} jadwal diproses")
-        
-        if activities:
-            for activity in activities[:3]:  # Tampilkan 3 terakhir
-                st.write(f"• {activity}")
-        else:
-            st.write("Belum ada aktivitas")
+            st.switch_page("run.py")
