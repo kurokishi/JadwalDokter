@@ -3,13 +3,12 @@ Data validation utilities
 """
 import pandas as pd
 import numpy as np
-from typing import List, Tuple, Dict, Any
 
 class DataValidator:
     """Data validation utility class"""
     
     @staticmethod
-    def validate_dataframe(df: pd.DataFrame, expected_columns: List[str] = None) -> Tuple[bool, List[str]]:
+    def validate_dataframe(df: pd.DataFrame, expected_columns = None):
         """Validate DataFrame structure and content"""
         errors = []
         
@@ -117,7 +116,7 @@ class DataValidator:
         return False
     
     @staticmethod
-    def validate_doctor_schedule(df: pd.DataFrame, doctor_name: str) -> Dict[str, Any]:
+    def validate_doctor_schedule(df: pd.DataFrame, doctor_name: str):
         """Validate schedule for a specific doctor"""
         validation_result = {
             'doctor_name': doctor_name,
