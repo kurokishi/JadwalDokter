@@ -1,129 +1,191 @@
 """
-Tab tentang aplikasi
+About tab UI component
 """
 import streamlit as st
-from ..config import config
+from app.config import AppConfig
 
-def render():
-    """Render tab tentang"""
-    st.header("ℹ️ Tentang Aplikasi")
+def display_about_tab():
+    """Display about tab content"""
     
-    # Header dengan logo
-    col1, col2 = st.columns([1, 3])
+    st.header("ℹ️ About")
+    
+    # App information
+    col1, col2 = st.columns([1, 2])
     
     with col1:
-        st.markdown(f"""
-            <div style="text-align: center;">
-                <h1 style="font-size: 60px; color: {config.COLORS['primary']}; margin: 0;">🏥</h1>
-            </div>
-        """, unsafe_allow_html=True)
+        st.image("🏥", width=150)
     
     with col2:
         st.markdown(f"""
-            # {config.PAGE_TITLE}
-            
-            **Versi:** 1.0.0
-            
-            Sistem Manajemen Jadwal Dokter Terintegrasi
-        """)
-    
-    st.markdown("---")
-    
-    # Deskripsi aplikasi
-    st.subheader("🎯 Tujuan Aplikasi")
-    
-    st.markdown("""
-    Aplikasi **Sistem Penjadwalan Dokter** dirancang untuk membantu rumah sakit, 
-    klinik, dan fasilitas kesehatan lainnya dalam mengelola jadwal praktik dokter 
-    secara efisien dan efektif.
-    
-    ### ✨ Fitur Utama:
-    
-    1. **📤 Upload Data Fleksibel**
-       - Support Excel, CSV berbagai format
-       - Validasi otomatis
-       - Pembersihan data
-    
-    2. **📅 Manajemen Jadwal**
-       - Visualisasi jadwal interaktif
-       - Deteksi konflik otomatis
-       - Filter dan pencarian
-    
-    3. **🧩 Penjadwalan Interaktif**
-       - Drag & drop interface
-       - Auto scheduling
-       - Custom rules
-    
-    4. **📊 Analytics & Reporting**
-       - Statistik lengkap
-       - Chart interaktif
-       - Export berbagai format
-    
-    5. **⚙️ Konfigurasi Lengkap**
-       - Custom working hours
-       - Specialization management
-       - Theme customization
-    """)
-    
-    st.markdown("---")
-    
-    # Teknologi yang digunakan
-    st.subheader("🛠️ Teknologi")
-    
-    tech_col1, tech_col2 = st.columns(2)
-    
-    with tech_col1:
-        st.markdown("""
-            **Frontend:**
-            - Streamlit
-            - Plotly
-            
-            **Backend:**
-            - Python 3.11
-            - Pandas
-            - NumPy
-        """)
-    
-    with tech_col2:
-        st.markdown("""
-            **Data Processing:**
-            - Pandas DataFrame
-            - Custom parsers
-            - Data validation
-        """)
-    
-    st.markdown("---")
-    
-    # Panduan penggunaan
-    st.subheader("📖 Panduan Cepat")
-    
-    with st.expander("🚀 Memulai", expanded=False):
-        st.markdown("""
-        1. **Upload Data** di tab Upload
-        2. **Validasi** dan bersihkan data
-        3. **Lihat Jadwal** di tab Jadwal
-        4. **Atur Preferensi** jika perlu
-        5. **Export** hasil jika sudah sesuai
-        """)
-    
-    with st.expander("🔧 Troubleshooting", expanded=False):
-        st.markdown("""
-        **Masalah Upload:**
-        - Pastikan format file sesuai
-        - Cek ukuran file (max 20MB)
-        - Pastikan kolom wajib ada
+        ### {AppConfig.APP_NAME}
+        **Version:** {AppConfig.APP_VERSION}
         
-        **Masalah Tampilan:**
-        - Refresh browser
-        - Clear cache
-        - Cek koneksi internet
+        Aplikasi manajemen jadwal dokter rumah sakit dengan fitur lengkap untuk 
+        upload, view, edit, dan analisis jadwal dokter.
         """)
     
-    # Footer
-    st.markdown("---")
+    # Features
+    st.divider()
+    st.subheader("✨ Features")
+    
+    features = [
+        {
+            "icon": "📤",
+            "title": "Upload Data",
+            "description": "Support untuk file Excel/CSV termasuk format khusus jadwal_hafis.xlsx"
+        },
+        {
+            "icon": "📅", 
+            "title": "Schedule Management",
+            "description": "View, filter, dan analisis jadwal dokter dengan berbagai tampilan"
+        },
+        {
+            "icon": "🧩",
+            "title": "Kanban Drag",
+            "description": "Sistem penjadwalan visual dengan drag & drop interface"
+        },
+        {
+            "icon": "📊",
+            "title": "Analytics",
+            "description": "Statistik dan visualisasi data jadwal dokter"
+        },
+        {
+            "icon": "⚙️",
+            "title": "Customization",
+            "description": "Pengaturan preferensi dan tampilan yang dapat disesuaikan"
+        },
+        {
+            "icon": "📁",
+            "title": "Export Data",
+            "description": "Export data ke format CSV untuk analisis lebih lanjut"
+        }
+    ]
+    
+    # Display features in grid
+    cols = st.columns(3)
+    for idx, feature in enumerate(features):
+        with cols[idx % 3]:
+            st.markdown(f"""
+            <div style="
+                padding: 1.5rem;
+                background-color: #f8f9fa;
+                border-radius: 10px;
+                margin-bottom: 1rem;
+                height: 180px;
+            ">
+                <h3>{feature['icon']} {feature['title']}</h3>
+                <p>{feature['description']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # File format support
+    st.divider()
+    st.subheader("📁 Supported File Formats")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        ### Standard Formats
+        - **Excel**: .xlsx, .xls
+        - **CSV**: .csv
+        
+        **Required columns:**
+        - `doctor_name` (Nama dokter)
+        - `specialty` (Spesialisasi)
+        - `day` (Hari)
+        - `working_hours` (Jam kerja)
+        """)
+    
+    with col2:
+        st.markdown("""
+        ### Special Format: jadwal_hafis.xlsx
+        Format khusus RS dengan struktur:
+        
+        ```
+        KSM | Nama dokter | POLI | SENIN | SELASA | ...
+        Anak | dr. Debby | JAM KERJA | 07:30-14:00
+          |   | REGULER | [Reference]
+          |   | EKSEKUTIF | 10:30-11:25
+        ```
+        
+        **Auto-detected and parsed with custom parser**
+        """)
+    
+    # How to use
+    st.divider()
+    st.subheader("🚀 How to Use")
+    
+    with st.expander("Quick Start Guide", expanded=False):
+        st.markdown("""
+        1. **Upload Data** (Tab Upload)
+           - Upload file Excel/CSV
+           - Untuk file jadwal_hafis.xlsx, sistem akan otomatis mengenali
+        
+        2. **View Schedule** (Tab Jadwal Dokter)
+           - Pilih tampilan: tabel, per dokter, atau timeline
+           - Filter berdasarkan spesialisasi atau hari
+        
+        3. **Manage Schedule** (Tab Kanban Drag)
+           - Atur jadwal dengan drag & drop interface
+           - Assign dokter ke time slots
+        
+        4. **Customize** (Tab Preferences)
+           - Atur preferensi tampilan
+           - Export/import settings
+        
+        5. **Export Data**
+           - Download data sebagai CSV
+           - Simpan perubahan
+        """)
+    
+    # Technology stack
+    st.divider()
+    st.subheader("🛠️ Technology Stack")
+    
+    tech_cols = st.columns(4)
+    
+    with tech_cols[0]:
+        st.markdown("""
+        **Frontend**
+        - Streamlit
+        - Plotly
+        """)
+    
+    with tech_cols[1]:
+        st.markdown("""
+        **Backend**
+        - Python 3.11
+        - Pandas
+        - NumPy
+        """)
+    
+    with tech_cols[2]:
+        st.markdown("""
+        **Data Processing**
+        - Custom parsers
+        - Data validation
+        - Cleaning utilities
+        """)
+    
+    with tech_cols[3]:
+        st.markdown("""
+        **Deployment**
+        - Streamlit Cloud
+        - Docker (optional)
+        """)
+    
+    # Contact & Support
+    st.divider()
+    st.subheader("📞 Contact & Support")
+    
     st.markdown("""
-        <div style="text-align: center; color: #666; padding: 20px;">
-            <p>© 2024 Sistem Penjadwalan Dokter. Hak Cipta Dilindungi.</p>
-            <p>Dikembangkan dengan ❤️ untuk dunia kesehatan Indonesia</p>
-        </div>
-    """, unsafe_allow_html=True)
+    Untuk pertanyaan, masalah, atau saran:
+    
+    - **Issues**: Laporkan bug atau request fitur
+    - **Documentation**: Lihat dokumentasi lengkap
+    - **Support**: Hubungi tim developer
+    
+    **Version:** {}
+    **Last Updated:** {}
+    """.format(AppConfig.APP_VERSION, "2024"))
