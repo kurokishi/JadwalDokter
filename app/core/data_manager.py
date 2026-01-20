@@ -4,7 +4,6 @@ Data management core logic
 import pandas as pd
 import numpy as np
 from datetime import datetime, time
-from typing import Dict, List, Any, Optional
 import streamlit as st
 
 class DataManager:
@@ -60,7 +59,7 @@ class DataManager:
             return self.data[self.data['specialty'] == specialty].copy()
         return pd.DataFrame()
     
-    def get_available_doctors(self, day: str = None) -> List[str]:
+    def get_available_doctors(self, day: str = None):
         """Get list of available doctors"""
         if self.data is None or 'doctor_name' not in self.data.columns:
             return []
@@ -71,19 +70,19 @@ class DataManager:
         
         return sorted(self.data['doctor_name'].unique().tolist())
     
-    def get_specialties(self) -> List[str]:
+    def get_specialties(self):
         """Get list of specialties"""
         if self.data is not None and 'specialty' in self.data.columns:
             return sorted(self.data['specialty'].unique().tolist())
         return []
     
-    def get_days(self) -> List[str]:
+    def get_days(self):
         """Get list of days with data"""
         if self.data is not None and 'day' in self.data.columns:
             return sorted(self.data['day'].unique().tolist())
         return []
     
-    def add_schedule(self, schedule_data: Dict[str, Any]):
+    def add_schedule(self, schedule_data):
         """Add new schedule entry"""
         if self.data is None:
             # Create new DataFrame
@@ -93,7 +92,7 @@ class DataManager:
             new_df = pd.DataFrame([schedule_data])
             self.data = pd.concat([self.data, new_df], ignore_index=True)
     
-    def update_schedule(self, index: int, schedule_data: Dict[str, Any]):
+    def update_schedule(self, index: int, schedule_data):
         """Update existing schedule entry"""
         if self.data is not None and 0 <= index < len(self.data):
             for key, value in schedule_data.items():
@@ -105,7 +104,7 @@ class DataManager:
         if self.data is not None and 0 <= index < len(self.data):
             self.data = self.data.drop(index).reset_index(drop=True)
     
-    def calculate_statistics(self) -> Dict[str, Any]:
+    def calculate_statistics(self):
         """Calculate statistics from data"""
         stats = {}
         
@@ -136,7 +135,7 @@ class DataManager:
         
         return stats
     
-    def filter_data(self, filters: Dict[str, Any]) -> pd.DataFrame:
+    def filter_data(self, filters):
         """Filter data based on criteria"""
         if self.data is None:
             return pd.DataFrame()
