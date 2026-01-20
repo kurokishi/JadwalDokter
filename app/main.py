@@ -3,15 +3,37 @@ Main module untuk aplikasi Streamlit
 """
 import streamlit as st
 from .config import config
-from .ui import (
-    render_home, 
-    render_upload, 
-    render_schedule, 
-    render_kanban, 
-    render_preferences, 
-    render_about
-)
-from .utils import initialize_session_state
+
+# Import UI functions
+from .ui.home import render as render_home
+from .ui.tab_upload import render as render_upload
+from .ui.tab_schedule import render as render_schedule
+from .ui.tab_kanban_drag import render as render_kanban
+from .ui.tab_preferences import render as render_preferences
+from .ui.tab_about import render as render_about
+
+def initialize_session_state():
+    """Initialize semua session state yang diperlukan"""
+    default_states = {
+        'uploaded_data': None,
+        'file_name': None,
+        'upload_time': None,
+        'schedule_data': None,
+        'validation_errors': [],
+        'doctors_list': [],
+        'specializations': [],
+        'preferences': {},
+        'current_view': 'home',
+        'notification': None,
+        'total_doctors': 0,
+        'total_schedules': 0,
+        'total_hours': 0,
+        'conflicts': []
+    }
+    
+    for key, default_value in default_states.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
 
 def setup_page():
     """Setup halaman Streamlit"""
@@ -59,15 +81,6 @@ def setup_page():
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }}
         
-        .doctor-badge {{
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 15px;
-            font-size: 12px;
-            font-weight: 600;
-            margin: 2px;
-        }}
-        
         .metric-card {{
             padding: 15px;
             border-radius: 10px;
@@ -95,7 +108,7 @@ def render_sidebar():
         st.markdown("### 📊 Status Aplikasi")
         
         # Cek data yang diupload
-        if 'uploaded_data' in st.session_state:
+        if 'uploaded_data' in st.session_state and st.session_state.uploaded_data is not None:
             data_status = "✅ Data Tersedia"
             data_color = config.COLORS['success']
         else:
@@ -110,9 +123,9 @@ def render_sidebar():
         
         # Info versi
         st.markdown("---")
-        st.markdown(f"""
+        st.markdown("""
             <div style="text-align: center; color: #666; font-size: 12px; padding: 10px;">
-                <strong>v{config.__version__}</strong><br>
+                <strong>v1.0.0</strong><br>
                 © 2024 Tim Pengembang
             </div>
         """, unsafe_allow_html=True)
