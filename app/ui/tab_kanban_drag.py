@@ -105,4 +105,29 @@ def _render_edit_mode():
         st.markdown(f"### Edit Jadwal untuk {selected_doctor}")
         
         # Form untuk menambah jadwal baru
-        with st.form("add_schedule_form
+        with st.form("add_schedule_form"):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                new_day = st.selectbox("Hari", config.WORK_DAYS)
+            
+            with col2:
+                new_start = st.time_input("Waktu Mulai", value=time(8, 0))
+            
+            with col3:
+                new_end = st.time_input("Waktu Selesai", value=time(12, 0))
+            
+            # Additional fields
+            room = st.text_input("Ruangan (opsional)")
+            
+            if st.form_submit_button("➕ Tambah Jadwal"):
+                st.success("Jadwal berhasil ditambahkan (simulasi)")
+        
+        # Tampilkan jadwal saat ini
+        st.markdown("### Jadwal Saat Ini")
+        doctor_data = df[df['nama_dokter'] == selected_doctor]
+        
+        if not doctor_data.empty:
+            st.dataframe(doctor_data, use_container_width=True)
+        else:
+            st.info("Dokter ini belum memiliki jadwal")
