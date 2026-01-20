@@ -15,7 +15,6 @@ class DataValidator:
     def __init__(self):
         self.validation_rules = {
             'required_columns': config.REQUIRED_COLUMNS,
-            'time_format': r'^\d{1,2}[:.]\d{2}$|^\d{1,2}\s*[apAP][mM]$',
             'min_duration': 0.5,  # 30 menit minimum
             'max_duration': 12,   # 12 jam maximum
             'valid_days': config.WORK_DAYS + config.WEEKEND
@@ -108,12 +107,6 @@ class DataValidator:
                 if duration_hours > self.validation_rules['max_duration']:
                     errors.append(f"Baris {row_idx}: Durasi terlalu panjang ({duration_hours:.2f} jam). Maksimum: {self.validation_rules['max_duration']} jam")
         
-        # 4. Validasi spesialisasi (jika ada)
-        if 'spesialisasi' in row:
-            specialization = str(row['spesialisasi']).strip()
-            if not specialization:
-                errors.append(f"Baris {row_idx}: Spesialisasi tidak boleh kosong")
-        
         return errors
     
     def _validate_consistency(self, df: pd.DataFrame) -> List[str]:
@@ -130,91 +123,7 @@ class DataValidator:
                 duplicate_count = duplicates.sum()
                 errors.append(f"Terdapat {duplicate_count} jadwal duplikat")
         
-        # 2. Cek konflik jadwal
-        conflict_errors = self._check_schedule_conflicts(df)
-        errors.extend(conflict_errors)
-        
-        # 3. Cek data outlier
-        outlier_errors = self._check_outliers(df)
-        errors.extend(outlier_errors)
-        
         return errors
-    
-    def _check_schedule_conflicts(self, df: pd.DataFrame) -> List[str]:
-        """Cek konflik jadwal untuk dokter yang sama di hari yang sama"""
-        errors = []
-        
-        if 'nama_dokter' not in df.columns or 'hari' not in df.columns:
-            return errors
-        
-        # Group by doctor and day
-        for (doctor, day), group in df.groupby(['nama_dokter', 'hari']):
-            if len(group) > 1:
-                # Sort by start time
-                schedules = []
-                for _, row in group.iterrows():
-                    start_time = parse_time(row.get('jam_mulai', ''))
-                    end_time = parse_time(row.get('jam_selesai', ''))
-                    
-                    if start_time and end_time:
-                        schedules.append({
-                            'start': start_time,
-                            'end': end_time,
-                            'row': row
-                        })
-                
-                # Sort by start time
-                schedules.sort(key=lambda x: x['start'])
-                
-                # Check for overlaps
-                for i in range(len(schedules) - 1):
-                    current = schedules[i]
-                    next_schedule = schedules[i + 1]
-                    
-                    if current['end'] > next_schedule['start']:
-                        errors.append(
-                            f"Konflik jadwal: Dr. {doctor} pada {day} "
-                            f"({current['start'].strftime('%H:%M')}-{current['end'].strftime('%H:%M')}) "
-                            f"overlap dengan ({next_schedule['start'].strftime('%H:%M')}-{next_schedule['end'].strftime('%H:%M')})"
-                        )
-        
-        return errors
-    
-    def _check_outliers(self, df: pd.DataFrame) -> List[str]:
-        """Cek data outlier"""
-        errors = []
-        
-        # Cek waktu mulai yang terlalu awal atau terlalu malam
-        if 'jam_mulai' in df.columns:
-            early_count = 0
-            late_count = 0
-            
-            for time_str in df['jam_mulai']:
-                time_obj = parse_time(time_str)
-                if time_obj:
-                    if time_obj.hour < 5:  # Sebelum jam 5 pagi
-                        early_count += 1
-                    elif time_obj.hour >= 22:  # Setelah jam 10 malam
-                        late_count += 1
-            
-            if early_count > 0:
-                errors.append(f"Terdapat {early_count} jadwal dengan waktu mulai sebelum jam 5 pagi")
-            
-            if late_count > 0:
-                errors.append(f"Terdapat {late_count} jadwal dengan waktu mulai setelah jam 10 malam")
-        
-        return errors
-    
-    def validate_time_format(self, time_str: str) -> bool:
-        """Validasi format waktu"""
-        if pd.isna(time_str):
-            return False
-        
-        time_str = str(time_str).strip()
-        
-        # Coba parse dengan fungsi parse_time
-        parsed = parse_time(time_str)
-        return parsed is not None
     
     def get_validation_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Dapatkan summary validasi"""
@@ -226,7 +135,6 @@ class DataValidator:
             'errors': errors,
             'total_rows': len(df),
             'total_columns': len(df.columns),
-            'missing_required_columns': [],
             'data_quality_score': 0
         }
         
@@ -246,3 +154,4 @@ class DataValidator:
             summary['data_quality_score'] = max(0, min(100, round(score)))
         
         return summary
+        
