@@ -1,32 +1,32 @@
 aplikasi generate jadwal dokter
 
 
-JadwalDokter/
-├── run.py                          # Entry point
-├── requirements.txt                # Dependencies
-├── runtime.txt                     # Python version
+jadwal_dokter/
+├── run.py
+├── requirements.txt
+├── runtime.txt
 ├── .streamlit/
-│   └── config.toml                # Streamlit config
-│
-└── app/                           # Main package
-    ├── __init__.py                # Package exports
-    ├── config.py                  # App configuration
-    ├── main.py                    # Main Streamlit app
-    ├── utils.py                   # Utility functions
-    │
-    ├── core/                      # Business logic
+│   └── config.toml
+└── app/
+    ├── __init__.py
+    ├── config.py
+    ├── main.py
+    ├── utils.py
+    ├── utils/
     │   ├── __init__.py
-    │   ├── cleaner.py            # Data cleaning
-    │   ├── parser.py             # Schedule parsing
-    │   ├── time_parser.py        # Time utilities
-    │   ├── validator.py          # Data validation
-    │   └── template_parser.py    # Template parsing
-    │
-    └── ui/                        # UI components
+    │   ├── parser.py
+    │   ├── cleaner.py
+    │   ├── time_parser.py
+    │   ├── validator.py
+    │   └── template_parser.py
+    ├── core/
+    │   ├── __init__.py
+    │   └── data_manager.py
+    └── ui/
         ├── __init__.py
-        ├── home.py               # Home page
-        ├── tab_upload.py         # Upload tab
-        ├── tab_schedule.py       # Schedule tab
-        ├── tab_kanban_drag.py    # Kanban drag tab (simplified)
-        ├── tab_preferences.py    # Preferences tab
-        └── tab_about.py          # About tab
+        ├── home.py
+        ├── tab_upload.py
+        ├── tab_schedule.py
+        ├── tab_kanban_drag.py
+        ├── tab_preferences.py
+        └── tab_about.py
