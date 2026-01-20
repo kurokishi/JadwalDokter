@@ -33,8 +33,6 @@ class DataCleaner:
             initial_count = len(df_clean)
             df_clean = df_clean.drop_duplicates()
             removed = initial_count - len(df_clean)
-            if removed > 0:
-                print(f"Removed {removed} duplicate rows")
         
         # 2. Trim whitespace untuk semua string columns
         if self.cleaning_rules['trim_spaces']:
@@ -86,8 +84,6 @@ class DataCleaner:
         
         # Validasi durasi waktu
         if all(col in df_clean.columns for col in ['jam_mulai', 'jam_selesai']):
-            invalid_rows = []
-            
             for idx, row in df_clean.iterrows():
                 start = parse_time(row['jam_mulai'])
                 end = parse_time(row['jam_selesai'])
@@ -103,15 +99,11 @@ class DataCleaner:
                             df_clean.at[idx, 'jam_selesai'], 
                             df_clean.at[idx, 'jam_mulai']
                         )
-                        print(f"Corrected time order for row {idx}")
         
         # Validasi hari
         if 'hari' in df_clean.columns:
             valid_days = config.WORK_DAYS + config.WEEKEND
             mask = df_clean['hari'].isin(valid_days)
-            if not mask.all():
-                invalid_days = df_clean[~mask]['hari'].unique()
-                print(f"Warning: Invalid days found: {invalid_days}")
         
         return df_clean
     
@@ -128,68 +120,4 @@ class DataCleaner:
         if 'hari' in df.columns:
             unique_values['days'] = sorted(df['hari'].dropna().unique().tolist())
         
-        if 'ruangan' in df.columns:
-            unique_values['rooms'] = sorted(df['ruangan'].dropna().unique().tolist())
-        
         return unique_values
-    
-    def calculate_schedule_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Hitung summary dari jadwal"""
-        summary = {
-            'total_schedules': len(df),
-            'total_doctors': 0,
-            'total_specializations': 0,
-            'total_hours': 0,
-            'daily_summary': {}
-        }
-        
-        if df.empty:
-            return summary
-        
-        # Hitung total dokter unik
-        if 'nama_dokter' in df.columns:
-            summary['total_doctors'] = df['nama_dokter'].nunique()
-        
-        # Hitung total spesialisasi unik
-        if 'spesialisasi' in df.columns:
-            summary['total_specializations'] = df['spesialisasi'].nunique()
-        
-        # Hitung total jam kerja
-        if all(col in df.columns for col in ['jam_mulai', 'jam_selesai']):
-            total_hours = 0
-            for _, row in df.iterrows():
-                start = parse_time(row['jam_mulai'])
-                end = parse_time(row['jam_selesai'])
-                if start and end:
-                    duration = (end.hour - start.hour) + (end.minute - start.minute) / 60
-                    if duration > 0:
-                        total_hours += duration
-            
-            summary['total_hours'] = round(total_hours, 2)
-        
-        # Summary per hari
-        if 'hari' in df.columns:
-            for day in config.WORK_DAYS:
-                day_data = df[df['hari'] == day]
-                if not day_data.empty:
-                    day_summary = {
-                        'schedules': len(day_data),
-                        'doctors': day_data['nama_dokter'].nunique() if 'nama_dokter' in day_data.columns else 0,
-                        'hours': 0
-                    }
-                    
-                    # Hitung jam per hari
-                    if all(col in day_data.columns for col in ['jam_mulai', 'jam_selesai']):
-                        day_hours = 0
-                        for _, row in day_data.iterrows():
-                            start = parse_time(row['jam_mulai'])
-                            end = parse_time(row['jam_selesai'])
-                            if start and end:
-                                duration = (end.hour - start.hour) + (end.minute - start.minute) / 60
-                                if duration > 0:
-                                    day_hours += duration
-                        day_summary['hours'] = round(day_hours, 2)
-                    
-                    summary['daily_summary'][day] = day_summary
-        
-        return summary
