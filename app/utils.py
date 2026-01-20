@@ -1,232 +1,223 @@
 """
-Utility functions untuk aplikasi Jadwal Dokter
+Utility functions for Jadwal Dokter App
 """
 import pandas as pd
 import numpy as np
-import streamlit as st
-from datetime import datetime, time, date, timedelta
-import base64
-import io
-from typing import Dict, List, Any, Optional, Tuple, Union
-import json
-import hashlib
 import re
+from datetime import datetime, time
+from typing import List, Dict, Any, Optional, Tuple
+import streamlit as st
 
-def initialize_session_state():
-    """Initialize semua session state yang diperlukan"""
-    default_states = {
-        'uploaded_data': None,
-        'file_name': None,
-        'upload_time': None,
-        'schedule_data': None,
-        'validation_errors': [],
-        'doctors_list': [],
-        'specializations': [],
-        'preferences': {},
-        'current_view': 'home',
-        'notification': None,
-        'total_doctors': 0,
-        'total_schedules': 0,
-        'total_hours': 0,
-        'conflicts': []
-    }
-    
-    for key, default_value in default_states.items():
-        if key not in st.session_state:
-            st.session_state[key] = default_value
-
-def show_message(message: str, message_type: str = "info"):
-    """Tampilkan message dengan format yang konsisten"""
-    icons = {
-        "success": "✅",
-        "error": "❌",
-        "warning": "⚠️",
-        "info": "ℹ️"
-    }
-    
-    icon = icons.get(message_type, "ℹ️")
-    
-    if message_type == "success":
-        st.success(f"{icon} {message}")
-    elif message_type == "error":
-        st.error(f"{icon} {message}")
-    elif message_type == "warning":
-        st.warning(f"{icon} {message}")
-    else:
-        st.info(f"{icon} {message}")
-
-def format_time(time_obj: Union[time, str]) -> str:
-    """Format waktu menjadi string HH:MM"""
-    if isinstance(time_obj, str):
-        return time_obj
-    elif isinstance(time_obj, time):
-        return time_obj.strftime("%H:%M")
-    elif pd.isna(time_obj):
+def clean_time_string(time_str: str) -> str:
+    """
+    Clean and standardize time string
+    Converts various formats to HH:MM
+    """
+    if pd.isna(time_str) or time_str in ['', '-', 'nan', 'None']:
         return ""
-    else:
-        return str(time_obj)
+    
+    # Convert to string
+    time_str = str(time_str).strip()
+    
+    # Remove Excel references
+    if time_str.startswith('='):
+        return "[Reference]"
+    
+    # Convert dot format to colon (07.30 -> 07:30)
+    time_str = re.sub(r'(\d{1,2})\.(\d{2})', r'\1:\2', time_str)
+    
+    # Remove all spaces
+    time_str = re.sub(r'\s+', '', time_str)
+    
+    # Ensure proper format
+    if '-' in time_str:
+        parts = time_str.split('-')
+        if len(parts) == 2:
+            start = clean_single_time(parts[0])
+            end = clean_single_time(parts[1])
+            return f"{start}-{end}"
+    
+    return clean_single_time(time_str)
 
-def parse_time(time_str: str) -> Optional[time]:
-    """Parse string waktu ke objek time"""
-    if pd.isna(time_str) or not time_str:
+def clean_single_time(time_str: str) -> str:
+    """Clean single time string to HH:MM format"""
+    if not time_str:
+        return ""
+    
+    # Remove non-numeric and non-colon characters
+    time_str = re.sub(r'[^\d:]', '', time_str)
+    
+    # Handle various formats
+    if ':' in time_str:
+        parts = time_str.split(':')
+        if len(parts) >= 2:
+            hours = parts[0].zfill(2)
+            minutes = parts[1].zfill(2) if len(parts[1]) > 0 else '00'
+            return f"{hours}:{minutes}"
+    
+    # Handle HHMM format
+    elif len(time_str) == 4:
+        return f"{time_str[:2]}:{time_str[2:]}"
+    
+    return "00:00"
+
+def parse_time_range(time_str: str) -> Optional[Tuple[time, time]]:
+    """Parse time range string to datetime.time objects"""
+    if not time_str or time_str == '[Reference]':
         return None
     
     try:
-        # Coba berbagai format
-        time_str = str(time_str).strip().lower()
+        # Clean the string
+        time_str = clean_time_string(time_str)
         
-        # Handle format 08:00, 8:00, 08.00, 8.00
-        time_str = time_str.replace('.', ':')
-        
-        # Handle AM/PM
-        is_pm = 'pm' in time_str or 'sore' in time_str or 'malam' in time_str
-        is_am = 'am' in time_str or 'pagi' in time_str or 'siang' in time_str
-        
-        # Hapus kata-kata non-numeric
-        time_str = re.sub(r'[^0-9:]', '', time_str)
-        
-        if ':' in time_str:
-            parts = time_str.split(':')
-            hour = int(parts[0])
-            minute = int(parts[1]) if len(parts) > 1 else 0
-        else:
-            if len(time_str) <= 2:
-                hour = int(time_str)
-                minute = 0
-            else:
-                hour = int(time_str[:2])
-                minute = int(time_str[2:4]) if len(time_str) >= 4 else 0
-        
-        # Adjust untuk PM
-        if is_pm and hour < 12:
-            hour += 12
-        elif is_am and hour == 12:
-            hour = 0
-        
-        # Validasi jam dan menit
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            return time(hour, minute)
-        else:
-            return None
-    except:
-        return None
+        if '-' in time_str:
+            start_str, end_str = time_str.split('-')
+            
+            # Parse start time
+            start_parts = start_str.split(':')
+            start_hour = int(start_parts[0]) if len(start_parts) > 0 else 0
+            start_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
+            start_time = time(start_hour, start_minute)
+            
+            # Parse end time
+            end_parts = end_str.split(':')
+            end_hour = int(end_parts[0]) if len(end_parts) > 0 else 0
+            end_minute = int(end_parts[1]) if len(end_parts) > 1 else 0
+            end_time = time(end_hour, end_minute)
+            
+            return (start_time, end_time)
+    
+    except Exception as e:
+        st.warning(f"Error parsing time range '{time_str}': {str(e)}")
+    
+    return None
 
 def calculate_duration(start_time: time, end_time: time) -> float:
-    """Hitung durasi dalam jam"""
-    if not start_time or not end_time:
-        return 0
+    """Calculate duration in hours between two times"""
+    if start_time and end_time:
+        start_dt = datetime.combine(datetime.today(), start_time)
+        end_dt = datetime.combine(datetime.today(), end_time)
+        
+        # Handle overnight schedules
+        if end_dt < start_dt:
+            end_dt = end_dt + timedelta(days=1)
+        
+        duration = (end_dt - start_dt).total_seconds() / 3600
+        return round(duration, 2)
     
-    start_minutes = start_time.hour * 60 + start_time.minute
-    end_minutes = end_time.hour * 60 + end_time.minute
-    
-    if end_minutes < start_minutes:
-        end_minutes += 24 * 60  # Handle overnight
-    
-    return (end_minutes - start_minutes) / 60.0
+    return 0.0
 
-def create_download_link(df: pd.DataFrame, filename: str = "data.csv", 
-                        file_type: str = "csv") -> str:
-    """Create download link untuk DataFrame"""
-    if file_type == "csv":
-        data = df.to_csv(index=False)
-        mime_type = "text/csv"
-        file_ext = "csv"
-    elif file_type == "excel":
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Data')
-        data = output.getvalue()
-        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        file_ext = "xlsx"
-    else:
-        raise ValueError("file_type harus 'csv' atau 'excel'")
-    
-    b64 = base64.b64encode(data).decode()
-    href = f'<a href="data:{mime_type};base64,{b64}" download="{filename}.{file_ext}">Download {filename}.{file_ext}</a>'
-    return href
-
-def validate_dataframe(df: pd.DataFrame, required_columns: List[str]) -> Tuple[bool, List[str]]:
-    """Validasi DataFrame"""
+def validate_dataframe(df: pd.DataFrame) -> Tuple[bool, List[str]]:
+    """Validate DataFrame structure and content"""
     errors = []
     
-    # Cek jika DataFrame kosong
+    # Check if DataFrame is empty
     if df.empty:
-        errors.append("DataFrame kosong")
+        errors.append("DataFrame is empty")
         return False, errors
     
-    # Cek kolom yang diperlukan
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        errors.append(f"Kolom yang hilang: {', '.join(missing_columns)}")
+    # Required columns for standard format
+    required_columns = ['doctor_name', 'specialty', 'day']
     
-    # Cek duplikat
-    duplicate_rows = df.duplicated().sum()
-    if duplicate_rows > 0:
-        errors.append(f"Terdapat {duplicate_rows} baris duplikat")
-    
-    # Cek nilai null di kolom penting
     for col in required_columns:
-        if col in df.columns:
-            null_count = df[col].isnull().sum()
-            if null_count > 0:
-                errors.append(f"Kolom '{col}' memiliki {null_count} nilai kosong")
+        if col not in df.columns:
+            errors.append(f"Missing required column: {col}")
     
-    return len(errors) == 0, errors
+    # Check for hafis format columns
+    hafis_columns = ['working_hours', 'regular_schedule', 'executive_schedule']
+    is_hafis_format = all(col in df.columns for col in hafis_columns)
+    
+    if not errors:
+        return True, []
+    
+    return False, errors
 
-def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Bersihkan DataFrame"""
-    # Buat copy
-    df_clean = df.copy()
-    
-    # Hapus duplikat
-    df_clean = df_clean.drop_duplicates()
-    
-    # Trim string columns
-    for col in df_clean.select_dtypes(include=['object']).columns:
-        df_clean[col] = df_clean[col].astype(str).str.strip()
-    
-    # Ubah ke huruf kapital untuk kolom tertentu
-    capitalize_cols = ['nama_dokter', 'spesialisasi', 'hari', 'ruangan', 'poliklinik']
-    for col in capitalize_cols:
-        if col in df_clean.columns:
-            df_clean[col] = df_clean[col].str.title()
-    
-    return df_clean
+def filter_by_day(df: pd.DataFrame, day: str) -> pd.DataFrame:
+    """Filter DataFrame by day"""
+    if 'day' in df.columns:
+        return df[df['day'] == day].copy()
+    return df
+
+def filter_by_specialty(df: pd.DataFrame, specialty: str) -> pd.DataFrame:
+    """Filter DataFrame by specialty"""
+    if 'specialty' in df.columns:
+        return df[df['specialty'] == specialty].copy()
+    return df
 
 def get_unique_values(df: pd.DataFrame, column: str) -> List[str]:
-    """Dapatkan nilai unik dari kolom"""
-    if column not in df.columns or df.empty:
-        return []
-    
-    return sorted(df[column].dropna().unique().tolist())
+    """Get unique values from a column"""
+    if column in df.columns:
+        return sorted(df[column].dropna().unique().tolist())
+    return []
 
-def calculate_statistics(df: pd.DataFrame) -> Dict[str, Any]:
-    """Hitung statistik dari DataFrame"""
-    stats = {
-        "total_rows": len(df),
-        "total_columns": len(df.columns),
-        "missing_values": df.isnull().sum().sum(),
-        "duplicate_rows": df.duplicated().sum()
-    }
+def create_summary_stats(df: pd.DataFrame) -> Dict[str, Any]:
+    """Create summary statistics from DataFrame"""
+    stats = {}
     
-    # Tambahkan statistik berdasarkan kolom yang ada
-    if 'nama_dokter' in df.columns:
-        stats["unique_doctors"] = df['nama_dokter'].nunique()
-    
-    if 'spesialisasi' in df.columns:
-        stats["unique_specializations"] = df['spesialisasi'].nunique()
-    
-    if 'hari' in df.columns:
-        stats["unique_days"] = df['hari'].nunique()
-    
-    # Hitung total jam kerja jika ada kolom waktu
-    if all(col in df.columns for col in ['jam_mulai', 'jam_selesai']):
-        total_hours = 0
-        for _, row in df.iterrows():
-            start = parse_time(row['jam_mulai'])
-            end = parse_time(row['jam_selesai'])
-            if start and end:
-                total_hours += calculate_duration(start, end)
-        stats["total_working_hours"] = round(total_hours, 2)
+    if df is not None and not df.empty:
+        stats['total_records'] = len(df)
+        
+        if 'doctor_name' in df.columns:
+            stats['total_doctors'] = len(df['doctor_name'].unique())
+        
+        if 'specialty' in df.columns:
+            stats['total_specialties'] = len(df['specialty'].unique())
+        
+        if 'day' in df.columns:
+            stats['days_covered'] = len(df['day'].unique())
+        
+        # Calculate availability
+        if 'available' in df.columns:
+            stats['available_slots'] = int(df['available'].sum())
+            stats['availability_rate'] = round((df['available'].sum() / len(df)) * 100, 1)
     
     return stats
+
+def convert_to_indonesian_day(day_english: str) -> str:
+    """Convert English day name to Indonesian"""
+    day_map = {
+        'Monday': 'Senin',
+        'Tuesday': 'Selasa',
+        'Wednesday': 'Rabu',
+        'Thursday': 'Kamis',
+        'Friday': 'Jumat',
+        'Saturday': 'Sabtu',
+        'Sunday': 'Minggu'
+    }
+    return day_map.get(day_english, day_english)
+
+def format_time_display(time_str: str, format_24h: bool = True) -> str:
+    """Format time for display"""
+    if not time_str or pd.isna(time_str):
+        return "-"
+    
+    # If already formatted as range
+    if '-' in time_str:
+        parts = time_str.split('-')
+        if len(parts) == 2:
+            start = format_single_time_display(parts[0], format_24h)
+            end = format_single_time_display(parts[1], format_24h)
+            return f"{start} - {end}"
+    
+    return format_single_time_display(time_str, format_24h)
+
+def format_single_time_display(time_str: str, format_24h: bool = True) -> str:
+    """Format single time for display"""
+    try:
+        if ':' in time_str:
+            hours, minutes = map(int, time_str.split(':'))
+            
+            if not format_24h:
+                # Convert to 12-hour format
+                period = "AM" if hours < 12 else "PM"
+                hours_12 = hours if hours <= 12 else hours - 12
+                if hours_12 == 0:
+                    hours_12 = 12
+                return f"{hours_12}:{minutes:02d} {period}"
+            else:
+                return f"{hours:02d}:{minutes:02d}"
+    
+    except:
+        pass
+    
+    return time_str
