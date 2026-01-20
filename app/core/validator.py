@@ -1,189 +1,248 @@
+"""
+Modul untuk validasi data
+"""
 import pandas as pd
+import numpy as np
+from datetime import datetime, time
+from typing import Dict, List, Any, Optional, Tuple
 import re
-from io import BytesIO
+from ..config import config
+from ..utils import parse_time
 
-
-class Validator:
-
-    # Kolom yang diharapkan untuk format file Excel Anda
-    REQUIRED_COLS_UPLOAD = ["Nama Dokter", "Poli Asal", "Jenis Poli"]
+class DataValidator:
+    """Class untuk validasi data jadwal dokter"""
     
-    # Hari yang valid
-    VALID_DAYS = ["Senin", "Selasa", "Rabu", "Kamis", "Jum'at", "Jumat", "Sabtu"]
-
-    @staticmethod
-    def validate_excel_file(file):
-        """
-        Validasi file excel upload user dengan format sheet Reguler dan Poleks.
+    def __init__(self):
+        self.validation_rules = {
+            'required_columns': config.REQUIRED_COLUMNS,
+            'time_format': r'^\d{1,2}[:.]\d{2}$|^\d{1,2}\s*[apAP][mM]$',
+            'min_duration': 0.5,  # 30 menit minimum
+            'max_duration': 12,   # 12 jam maximum
+            'valid_days': config.WORK_DAYS + config.WEEKEND
+        }
+    
+    def validate_dataframe(self, df: pd.DataFrame) -> Tuple[bool, List[str]]:
+        """Validasi seluruh DataFrame"""
+        errors = []
         
-        Args:
-            file: Uploaded file dari Streamlit
+        # 1. Cek jika DataFrame kosong
+        if df.empty:
+            errors.append("DataFrame kosong")
+            return False, errors
+        
+        # 2. Cek kolom yang diperlukan
+        missing_cols = self._check_required_columns(df)
+        if missing_cols:
+            errors.append(f"Kolom yang diperlukan tidak ditemukan: {', '.join(missing_cols)}")
+        
+        # 3. Validasi setiap baris
+        row_errors = self._validate_rows(df)
+        errors.extend(row_errors)
+        
+        # 4. Validasi konsistensi data
+        consistency_errors = self._validate_consistency(df)
+        errors.extend(consistency_errors)
+        
+        return len(errors) == 0, errors
+    
+    def _check_required_columns(self, df: pd.DataFrame) -> List[str]:
+        """Cek kolom yang diperlukan"""
+        missing = []
+        for col in self.validation_rules['required_columns']:
+            if col not in df.columns:
+                missing.append(col)
+        return missing
+    
+    def _validate_rows(self, df: pd.DataFrame) -> List[str]:
+        """Validasi setiap baris data"""
+        errors = []
+        
+        for idx, row in df.iterrows():
+            row_errors = self._validate_single_row(row, idx)
+            if row_errors:
+                errors.extend(row_errors)
+        
+        return errors
+    
+    def _validate_single_row(self, row: pd.Series, row_idx: int) -> List[str]:
+        """Validasi satu baris data"""
+        errors = []
+        
+        # 1. Validasi data dokter
+        if 'nama_dokter' in row:
+            doctor = str(row['nama_dokter']).strip()
+            if not doctor or doctor.lower() in ['', 'nan', 'null', 'undefined']:
+                errors.append(f"Baris {row_idx}: Nama dokter tidak valid")
+        
+        # 2. Validasi hari
+        if 'hari' in row:
+            day = str(row['hari']).strip().title()
+            valid_days = self.validation_rules['valid_days']
+            if day not in valid_days:
+                errors.append(f"Baris {row_idx}: Hari '{day}' tidak valid. Hari yang valid: {', '.join(valid_days)}")
+        
+        # 3. Validasi waktu
+        if 'jam_mulai' in row and 'jam_selesai' in row:
+            start_time = parse_time(row['jam_mulai'])
+            end_time = parse_time(row['jam_selesai'])
             
-        Returns:
-            (is_valid: bool, message: str)
-        """
-        try:
-            if file is None:
-                return False, "Tidak ada file yang diupload"
-
-            # Streamlit uploader menghasilkan BytesIO → reset posisi
-            file.seek(0)
-
-            # Baca sheet names untuk validasi
-            try:
-                excel_file = pd.ExcelFile(file)
-                sheet_names = excel_file.sheet_names
+            if not start_time:
+                errors.append(f"Baris {row_idx}: Format waktu mulai '{row['jam_mulai']}' tidak valid")
+            
+            if not end_time:
+                errors.append(f"Baris {row_idx}: Format waktu selesai '{row['jam_selesai']}' tidak valid")
+            
+            if start_time and end_time:
+                # Validasi durasi
+                start_minutes = start_time.hour * 60 + start_time.minute
+                end_minutes = end_time.hour * 60 + end_time.minute
                 
-                # Cek sheet required
-                required_sheets = ["Reguler", "Poleks"]
-                missing_sheets = [s for s in required_sheets if s not in sheet_names]
+                if end_minutes < start_minutes:
+                    end_minutes += 24 * 60  # Handle overnight
                 
-                if missing_sheets:
-                    available_sheets = ", ".join(sheet_names)
-                    return False, f"Sheet wajib tidak ditemukan: {missing_sheets}. Sheet yang ada: {available_sheets}"
+                duration_hours = (end_minutes - start_minutes) / 60
                 
-                # Validasi setiap sheet
-                for sheet_name in required_sheets:
-                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                if duration_hours < self.validation_rules['min_duration']:
+                    errors.append(f"Baris {row_idx}: Durasi terlalu pendek ({duration_hours:.2f} jam). Minimum: {self.validation_rules['min_duration']} jam")
+                
+                if duration_hours > self.validation_rules['max_duration']:
+                    errors.append(f"Baris {row_idx}: Durasi terlalu panjang ({duration_hours:.2f} jam). Maksimum: {self.validation_rules['max_duration']} jam")
+        
+        # 4. Validasi spesialisasi (jika ada)
+        if 'spesialisasi' in row:
+            specialization = str(row['spesialisasi']).strip()
+            if not specialization:
+                errors.append(f"Baris {row_idx}: Spesialisasi tidak boleh kosong")
+        
+        return errors
+    
+    def _validate_consistency(self, df: pd.DataFrame) -> List[str]:
+        """Validasi konsistensi data"""
+        errors = []
+        
+        # 1. Cek duplikat jadwal
+        duplicate_check_cols = ['nama_dokter', 'hari', 'jam_mulai', 'jam_selesai']
+        available_cols = [col for col in duplicate_check_cols if col in df.columns]
+        
+        if len(available_cols) >= 3:
+            duplicates = df.duplicated(subset=available_cols, keep=False)
+            if duplicates.any():
+                duplicate_count = duplicates.sum()
+                errors.append(f"Terdapat {duplicate_count} jadwal duplikat")
+        
+        # 2. Cek konflik jadwal
+        conflict_errors = self._check_schedule_conflicts(df)
+        errors.extend(conflict_errors)
+        
+        # 3. Cek data outlier
+        outlier_errors = self._check_outliers(df)
+        errors.extend(outlier_errors)
+        
+        return errors
+    
+    def _check_schedule_conflicts(self, df: pd.DataFrame) -> List[str]:
+        """Cek konflik jadwal untuk dokter yang sama di hari yang sama"""
+        errors = []
+        
+        if 'nama_dokter' not in df.columns or 'hari' not in df.columns:
+            return errors
+        
+        # Group by doctor and day
+        for (doctor, day), group in df.groupby(['nama_dokter', 'hari']):
+            if len(group) > 1:
+                # Sort by start time
+                schedules = []
+                for _, row in group.iterrows():
+                    start_time = parse_time(row.get('jam_mulai', ''))
+                    end_time = parse_time(row.get('jam_selesai', ''))
                     
-                    # Validasi kolom required
-                    df.columns = [str(c).strip() for c in df.columns]
-                    missing = [c for c in Validator.REQUIRED_COLS_UPLOAD 
-                              if c not in df.columns]
+                    if start_time and end_time:
+                        schedules.append({
+                            'start': start_time,
+                            'end': end_time,
+                            'row': row
+                        })
+                
+                # Sort by start time
+                schedules.sort(key=lambda x: x['start'])
+                
+                # Check for overlaps
+                for i in range(len(schedules) - 1):
+                    current = schedules[i]
+                    next_schedule = schedules[i + 1]
                     
-                    if missing:
-                        return False, f"Sheet '{sheet_name}': Kolom wajib tidak ditemukan: {missing}"
-                    
-                    # Validasi minimal 1 baris data
-                    if df.empty:
-                        return False, f"Sheet '{sheet_name}' kosong"
-                        
-            except Exception as e:
-                # Fallback: coba baca sebagai single sheet
-                file.seek(0)
-                df = pd.read_excel(file)
-                
-                # Validasi kolom untuk single sheet
-                df.columns = [str(c).strip() for c in df.columns]
-                missing = [c for c in Validator.REQUIRED_COLS_UPLOAD 
-                          if c not in df.columns]
-                
-                if missing:
-                    return False, f"Kolom wajib tidak ditemukan: {missing}. Format file tidak sesuai."
-                
-                # Cek kolom hari
-                hari_cols = [col for col in df.columns if col in Validator.VALID_DAYS]
-                if not hari_cols:
-                    return False, f"Tidak ditemukan kolom hari. Kolom yang ada: {list(df.columns)}"
-
-            return True, "File valid"
-
-        except Exception as e:
-            return False, f"Gagal membaca file: {str(e)}"
-
-    @staticmethod
-    def validate_time_format(time_str):
-        """
-        Validasi format waktu.
-        Format yang diterima: "07.30-10.00", "07:30-10:00", "7.30 - 10.00", dll.
-        """
-        if pd.isna(time_str) or str(time_str).strip() == "":
-            return True  # Kosong dianggap valid
+                    if current['end'] > next_schedule['start']:
+                        errors.append(
+                            f"Konflik jadwal: Dr. {doctor} pada {day} "
+                            f"({current['start'].strftime('%H:%M')}-{current['end'].strftime('%H:%M')}) "
+                            f"overlap dengan ({next_schedule['start'].strftime('%H:%M')}-{next_schedule['end'].strftime('%H:%M')})"
+                        )
+        
+        return errors
+    
+    def _check_outliers(self, df: pd.DataFrame) -> List[str]:
+        """Cek data outlier"""
+        errors = []
+        
+        # Cek waktu mulai yang terlalu awal atau terlalu malam
+        if 'jam_mulai' in df.columns:
+            early_count = 0
+            late_count = 0
+            
+            for time_str in df['jam_mulai']:
+                time_obj = parse_time(time_str)
+                if time_obj:
+                    if time_obj.hour < 5:  # Sebelum jam 5 pagi
+                        early_count += 1
+                    elif time_obj.hour >= 22:  # Setelah jam 10 malam
+                        late_count += 1
+            
+            if early_count > 0:
+                errors.append(f"Terdapat {early_count} jadwal dengan waktu mulai sebelum jam 5 pagi")
+            
+            if late_count > 0:
+                errors.append(f"Terdapat {late_count} jadwal dengan waktu mulai setelah jam 10 malam")
+        
+        return errors
+    
+    def validate_time_format(self, time_str: str) -> bool:
+        """Validasi format waktu"""
+        if pd.isna(time_str):
+            return False
         
         time_str = str(time_str).strip()
         
-        # Pattern untuk format: digit[:.]digit - digit[:.]digit
-        pattern = re.compile(r'^\s*\d{1,2}[:\.]\d{2}\s*[-–]\s*\d{1,2}[:\.]\d{2}\s*$')
+        # Coba parse dengan fungsi parse_time
+        parsed = parse_time(time_str)
+        return parsed is not None
+    
+    def get_validation_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Dapatkan summary validasi"""
+        is_valid, errors = self.validate_dataframe(df)
         
-        return bool(pattern.match(time_str))
-
-    @staticmethod
-    def validate_dataframe(df):
-        """
-        Validasi dataframe internal setelah diproses oleh cleaner.
-        """
-        # Kolom required setelah cleaning
-        required_cols = ["Nama Dokter", "Poli Asal", "Jenis Poli"]
+        summary = {
+            'is_valid': is_valid,
+            'total_errors': len(errors),
+            'errors': errors,
+            'total_rows': len(df),
+            'total_columns': len(df.columns),
+            'missing_required_columns': [],
+            'data_quality_score': 0
+        }
         
-        # Cek kolom
-        missing = [c for c in required_cols if c not in df.columns]
-        if missing:
-            return False, f"Kolom hilang pada DF internal: {missing}"
+        # Hitung data quality score
+        if len(df) > 0:
+            # Base score
+            score = 100
+            
+            # Deductions for errors
+            score -= min(len(errors) * 5, 50)  # Max 50 points deduction for errors
+            
+            # Deductions for missing values
+            if not df.empty:
+                missing_percentage = df.isnull().sum().sum() / (len(df) * len(df.columns))
+                score -= missing_percentage * 30  # Max 30 points deduction for missing values
+            
+            summary['data_quality_score'] = max(0, min(100, round(score)))
         
-        # Cek data kosong
-        if df.empty:
-            return False, "Dataframe kosong"
-        
-        # Cek missing values pada kolom required
-        for col in required_cols:
-            if df[col].isna().any():
-                return False, f"Terdapat nilai kosong pada kolom {col}"
-        
-        # Validasi format waktu di kolom hari
-        hari_cols = [col for col in df.columns if col in Validator.VALID_DAYS]
-        
-        bad_time_formats = []
-        for hari in hari_cols:
-            if hari in df.columns:
-                for idx, value in df[hari].items():
-                    if not Validator.validate_time_format(value):
-                        bad_time_formats.append(f"Baris {idx+2}, {hari}: '{value}'")
-        
-        if bad_time_formats:
-            return False, f"Format waktu tidak valid:\n" + "\n".join(bad_time_formats[:10])
-        
-        return True, "Dataframe valid"
-
-    @staticmethod
-    def validate_grid_data(df_grid, slot_strings):
-        """
-        Validasi dataframe grid hasil scheduler.
-        """
-        required_cols = ["POLI", "JENIS", "HARI", "DOKTER"]
-        
-        # Cek kolom
-        missing = [c for c in required_cols if c not in df_grid.columns]
-        if missing:
-            return False, f"Kolom hilang pada grid: {missing}"
-        
-        # Cek slot columns
-        missing_slots = [slot for slot in slot_strings if slot not in df_grid.columns]
-        if missing_slots:
-            return False, f"Slot waktu hilang pada grid: {missing_slots[:5]}..."
-        
-        # Cek data valid di slot
-        valid_codes = ['', 'R', 'E']
-        invalid_codes = []
-        
-        for slot in slot_strings:
-            if slot in df_grid.columns:
-                invalid = df_grid[~df_grid[slot].isin(valid_codes)]
-                if not invalid.empty:
-                    invalid_codes.append(f"Slot {slot}: nilai tidak valid ditemukan")
-        
-        if invalid_codes:
-            return False, f"Nilai tidak valid pada slot: {invalid_codes}"
-        
-        return True, "Grid data valid"
-
-    @staticmethod
-    def get_time_format_errors(df):
-        """
-        Dapatkan daftar error format waktu untuk ditampilkan ke user.
-        """
-        errors = []
-        hari_cols = [col for col in df.columns if col in Validator.VALID_DAYS]
-        
-        for hari in hari_cols:
-            if hari in df.columns:
-                for idx, value in df[hari].items():
-                    if pd.notna(value) and not Validator.validate_time_format(value):
-                        errors.append({
-                            'row': idx + 2,  # +2 karena header + 1-based index
-                            'hari': hari,
-                            'value': str(value),
-                            'doctor': df.loc[idx, 'Nama Dokter'] if 'Nama Dokter' in df.columns else 'Unknown',
-                            'poli': df.loc[idx, 'Poli Asal'] if 'Poli Asal' in df.columns else 'Unknown'
-                        })
-        
-        return errors
+        return summary
