@@ -1,411 +1,195 @@
-# app/core/cleaner.py
 """
-DataCleaner - Modul untuk membersihkan data Excel sebelum diproses
-Supports both old format (Reguler/Poleks sheets) and new KSM-based template format
+Modul untuk membersihkan dan memproses data
 """
-
 import pandas as pd
-import io
+import numpy as np
+from datetime import datetime, time, date
+from typing import Dict, List, Any, Optional, Tuple
 import re
-from typing import Union, List
-import traceback
-
-from app.core.template_parser import TemplateParser
-
+from ..config import config
+from ..utils import parse_time, format_time
 
 class DataCleaner:
-    """
-    Class untuk membersihkan data dari berbagai sumber input
-    Supports both old and new template formats
-    """
+    """Class untuk membersihkan data jadwal dokter"""
     
     def __init__(self):
-        """Inisialisasi DataCleaner"""
-        self.template_parser = TemplateParser()
-        print("✅ DataCleaner initialized (with new template support)")
+        self.cleaning_rules = {
+            'trim_spaces': True,
+            'capitalize_names': True,
+            'standardize_time': True,
+            'remove_duplicates': True,
+            'fill_missing': False
+        }
     
-    def clean(self, df_or_file) -> pd.DataFrame:
-        """
-        Clean data dari berbagai sumber
-        
-        Args:
-            df_or_file: Bisa berupa:
-                      1. BytesIO (file upload Streamlit)
-                      2. String path ke file
-                      3. DataFrame
-            
-        Returns:
-            DataFrame yang sudah dibersihkan
-        """
-        print(f"🔧 DataCleaner.clean() called with type: {type(df_or_file)}")
-        
-        try:
-            # Case 1: BytesIO (file upload Streamlit)
-            if isinstance(df_or_file, io.BytesIO):
-                print("   Input is BytesIO, reading Excel file...")
-                return self._clean_from_bytesio(df_or_file)
-            
-            # Case 2: String path
-            elif isinstance(df_or_file, str):
-                print(f"   Input is string path: {df_or_file}")
-                if df_or_file.endswith(('.xlsx', '.xls')):
-                    return self._clean_from_excel(df_or_file)
-                else:
-                    raise ValueError(f"File format not supported: {df_or_file}")
-            
-            # Case 3: DataFrame
-            elif isinstance(df_or_file, pd.DataFrame):
-                print("   Input is DataFrame, cleaning directly...")
-                return self._clean_dataframe(df_or_file)
-            
-            # Case 4: Bytes (raw bytes)
-            elif isinstance(df_or_file, bytes):
-                print("   Input is bytes, converting to BytesIO...")
-                return self._clean_from_bytesio(io.BytesIO(df_or_file))
-            
-            else:
-                raise ValueError(f"Unsupported input type: {type(df_or_file)}")
-                
-        except Exception as e:
-            print(f"❌ Error in DataCleaner.clean(): {e}")
-            print(traceback.format_exc())
-            raise
-    
-    def _clean_from_bytesio(self, bytes_io: io.BytesIO) -> pd.DataFrame:
-        """Clean data dari BytesIO - supports both old and new template formats"""
-        try:
-            bytes_io.seek(0)
-            file_bytes = bytes_io.getvalue()
-            
-            if self.template_parser.is_new_template_format(io.BytesIO(file_bytes)):
-                print("   Detected NEW template format (KSM-based)")
-                parsed_df = self.template_parser.parse(io.BytesIO(file_bytes))
-                if not parsed_df.empty:
-                    return self._clean_dataframe(parsed_df)
-                else:
-                    print("   ⚠️ New template parsing returned empty, falling back to old format")
-            
-            print("   Using OLD template format (Reguler/Poleks sheets)")
-            bytes_io.seek(0)
-            excel_file = pd.ExcelFile(bytes_io)
-            sheet_names = excel_file.sheet_names
-            print(f"   Excel sheets found: {sheet_names}")
-            
-            all_data = []
-            
-            for sheet in ['Reguler', 'Poleks']:
-                if sheet in sheet_names:
-                    print(f"   Reading sheet: {sheet}")
-                    df = pd.read_excel(excel_file, sheet_name=sheet)
-                    df['Jenis Poli'] = sheet
-                    all_data.append(df)
-                else:
-                    print(f"   ⚠️ Sheet '{sheet}' not found")
-            
-            if not all_data:
-                print("   No Reguler/Poleks sheets, reading first sheet...")
-                df = pd.read_excel(excel_file, sheet_name=0)
-                all_data.append(df)
-            
-            combined_df = pd.concat(all_data, ignore_index=True)
-            print(f"   Combined data: {len(combined_df)} rows")
-            
-            return self._clean_dataframe(combined_df)
-            
-        except Exception as e:
-            print(f"❌ Error reading from BytesIO: {e}")
-            print(traceback.format_exc())
-            raise
-    
-    def _clean_from_excel(self, file_path: str) -> pd.DataFrame:
-        """Clean data dari file Excel - supports both old and new template formats"""
-        try:
-            if self.template_parser.is_new_template_format(file_path):
-                print("   Detected NEW template format (KSM-based)")
-                parsed_df = self.template_parser.parse(file_path)
-                if not parsed_df.empty:
-                    return self._clean_dataframe(parsed_df)
-                else:
-                    print("   ⚠️ New template parsing returned empty, falling back to old format")
-            
-            print("   Using OLD template format (Reguler/Poleks sheets)")
-            excel_file = pd.ExcelFile(file_path)
-            sheet_names = excel_file.sheet_names
-            print(f"   Excel sheets: {sheet_names}")
-            
-            all_data = []
-            
-            for sheet in ['Reguler', 'Poleks']:
-                if sheet in sheet_names:
-                    df = pd.read_excel(excel_file, sheet_name=sheet)
-                    df['Jenis Poli'] = sheet
-                    all_data.append(df)
-            
-            if not all_data:
-                df = pd.read_excel(excel_file, sheet_name=0)
-                all_data.append(df)
-            
-            combined_df = pd.concat(all_data, ignore_index=True)
-            return self._clean_dataframe(combined_df)
-            
-        except Exception as e:
-            print(f"❌ Error reading Excel file: {e}")
-            raise
-    
-    def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean DataFrame yang sudah digabungkan"""
-        print(f"   Cleaning DataFrame with {len(df)} rows, {len(df.columns)} columns")
-        
+    def clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Bersihkan seluruh DataFrame"""
         if df.empty:
-            print("   ⚠️ DataFrame is empty, returning empty DataFrame")
             return df
         
-        print(f"   Original columns: {list(df.columns)}")
-        
-        # Buat copy untuk menghindari warning
         df_clean = df.copy()
         
-        # 1. Normalisasi nama kolom (jika ada)
-        if hasattr(df_clean, 'columns'):
-            df_clean.columns = [str(col).strip() for col in df_clean.columns]
-        else:
-            print("   ⚠️ DataFrame has no columns attribute")
-            return pd.DataFrame()
-        
-        # 2. Mapping nama kolom
-        column_mapping = {
-            'Nama Dokter': 'Nama Dokter',
-            'nama dokter': 'Nama Dokter',
-            'Dokter': 'Nama Dokter',
-            'Poli Asal': 'Poli Asal',
-            'poli asal': 'Poli Asal',
-            'Poli': 'Poli Asal',
-            'Jenis Poli': 'Jenis Poli',
-            'jenis poli': 'Jenis Poli',
-            'Jenis': 'Jenis Poli',
-            'Senin': 'Senin',
-            'Selasa': 'Selasa',
-            'Rabu': 'Rabu',
-            'Kamis': 'Kamis',
-            "Jum'at": "Jum'at",
-            'Jumat': "Jum'at",
-            'Sabtu': 'Sabtu'
-        }
-        
-        # Rename kolom
-        renamed_count = 0
-        for old_name, new_name in column_mapping.items():
-            if old_name in df_clean.columns and new_name not in df_clean.columns:
-                df_clean.rename(columns={old_name: new_name}, inplace=True)
-                renamed_count += 1
-                print(f"   Renamed column: {old_name} -> {new_name}")
-        
-        print(f"   Total columns renamed: {renamed_count}")
-        
-        # 3. Drop kolom yang tidak perlu
-        cols_to_drop = ['No', 'Unnamed: 0', 'Unnamed: 1', 'Unnamed: 2', 'Unnamed: 3', 'Unnamed: 4']
-        dropped_count = 0
-        for col in cols_to_drop:
-            if col in df_clean.columns:
-                df_clean.drop(columns=[col], inplace=True)
-                dropped_count += 1
-                print(f"   Dropped column: {col}")
-        
-        print(f"   Total columns dropped: {dropped_count}")
-        
-        # 4. Validasi kolom required
-        required_cols = ['Nama Dokter', 'Poli Asal']
-        missing_cols = [col for col in required_cols if col not in df_clean.columns]
-        
-        if missing_cols:
-            print(f"   ❌ Missing required columns: {missing_cols}")
-            print(f"   Available columns: {list(df_clean.columns)}")
-            raise ValueError(f"Missing required columns: {missing_cols}")
-        
-        print(f"   ✓ All required columns present")
-        
-        # 5. Clean data per kolom
-        # Nama Dokter
-        if 'Nama Dokter' in df_clean.columns:
-            df_clean['Nama Dokter'] = df_clean['Nama Dokter'].astype(str).str.strip()
-            # Remove empty doctor names
+        # 1. Hapus duplikat
+        if self.cleaning_rules['remove_duplicates']:
             initial_count = len(df_clean)
-            mask = (df_clean['Nama Dokter'].isna()) | (df_clean['Nama Dokter'].isin(['nan', 'NaN', 'None', '']))
-            df_clean = df_clean[~mask].reset_index(drop=True)
-            print(f"   Removed {initial_count - len(df_clean)} rows with empty doctor names")
+            df_clean = df_clean.drop_duplicates()
+            removed = initial_count - len(df_clean)
+            if removed > 0:
+                print(f"Removed {removed} duplicate rows")
         
-        # Poli Asal
-        if 'Poli Asal' in df_clean.columns:
-            df_clean['Poli Asal'] = df_clean['Poli Asal'].astype(str).str.strip()
+        # 2. Trim whitespace untuk semua string columns
+        if self.cleaning_rules['trim_spaces']:
+            for col in df_clean.select_dtypes(include=['object']).columns:
+                df_clean[col] = df_clean[col].astype(str).str.strip()
         
-        # Jenis Poli (jika ada)
-        if 'Jenis Poli' in df_clean.columns:
-            df_clean['Jenis Poli'] = df_clean['Jenis Poli'].astype(str).str.strip()
-            # Normalisasi nilai
-            df_clean['Jenis Poli'] = df_clean['Jenis Poli'].replace({
-                'reguler': 'Reguler',
-                'poleks': 'Poleks',
-                'Polek': 'Poleks',
-                'REGULER': 'Reguler',
-                'POLEKS': 'Poleks',
-                'Reguler': 'Reguler',
-                'Poleks': 'Poleks'
-            })
-        else:
-            # Jika tidak ada kolom Jenis Poli, tambahkan default
-            df_clean['Jenis Poli'] = 'Reguler'
-            print(f"   Added default 'Jenis Poli' column")
+        # 3. Kapitalisasi nama dan spesialisasi
+        if self.cleaning_rules['capitalize_names']:
+            capitalize_cols = ['nama_dokter', 'spesialisasi', 'hari', 'ruangan']
+            for col in capitalize_cols:
+                if col in df_clean.columns:
+                    df_clean[col] = df_clean[col].str.title()
         
-        # 6. Clean kolom hari
-        hari_cols = ['Senin', 'Selasa', 'Rabu', 'Kamis', "Jum'at", 'Sabtu']
-        hari_cleaned = {}
+        # 4. Standardisasi waktu
+        if self.cleaning_rules['standardize_time'] and 'jam_mulai' in df_clean.columns and 'jam_selesai' in df_clean.columns:
+            df_clean = self._standardize_times(df_clean)
         
-        for hari in hari_cols:
-            if hari in df_clean.columns:
-                # Konversi ke string dan clean
-                df_clean[hari] = df_clean[hari].astype(str).str.strip()
-                # Replace nilai kosong dengan None
-                df_clean[hari] = df_clean[hari].replace(['nan', 'NaN', 'NaT', 'None', ''], None)
-                non_empty = df_clean[hari].notna().sum()
-                hari_cleaned[hari] = non_empty
-                print(f"   Cleaned column {hari}: {non_empty} non-empty values")
-        
-        # 7. Drop baris yang semua kolom harinya kosong
-        hari_cols_exist = [h for h in hari_cols if h in df_clean.columns]
-        if hari_cols_exist:
-            initial_count = len(df_clean)
-            mask = df_clean[hari_cols_exist].isnull().all(axis=1)
-            df_clean = df_clean[~mask].reset_index(drop=True)
-            removed_count = initial_count - len(df_clean)
-            if removed_count > 0:
-                print(f"   Removed {removed_count} rows with all empty days")
-        
-        # 8. Reset index
-        df_clean = df_clean.reset_index(drop=True)
-        
-        print(f"   ✅ Cleaning complete: {len(df_clean)} rows remaining")
-        print(f"   Final columns: {list(df_clean.columns)}")
-        
-        # Show sample of cleaned data
-        if len(df_clean) > 0:
-            print(f"   Sample cleaned data (first row):")
-            sample = df_clean.iloc[0]
-            for col in df_clean.columns:
-                if col in sample:
-                    print(f"     {col}: {sample[col]}")
+        # 5. Validasi dan koreksi data
+        df_clean = self._validate_and_correct(df_clean)
         
         return df_clean
     
-    def validate_time_format(self, time_str: str) -> bool:
-        """
-        Validasi format waktu
+    def _standardize_times(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Standardisasi format waktu"""
+        df_clean = df.copy()
         
-        Args:
-            time_str: String waktu untuk divalidasi
-            
-        Returns:
-            True jika format valid
-        """
-        if pd.isna(time_str) or not isinstance(time_str, str):
-            return False
+        # Process jam_mulai
+        if 'jam_mulai' in df_clean.columns:
+            df_clean['jam_mulai_parsed'] = df_clean['jam_mulai'].apply(parse_time)
+            df_clean['jam_mulai'] = df_clean['jam_mulai_parsed'].apply(
+                lambda x: format_time(x) if x else None
+            )
         
-        time_str = str(time_str).strip()
-        if not time_str or time_str.lower() in ['nan', 'null', 'none', '']:
-            return True  # Empty is valid
+        # Process jam_selesai
+        if 'jam_selesai' in df_clean.columns:
+            df_clean['jam_selesai_parsed'] = df_clean['jam_selesai'].apply(parse_time)
+            df_clean['jam_selesai'] = df_clean['jam_selesai_parsed'].apply(
+                lambda x: format_time(x) if x else None
+            )
         
-        # Pattern untuk format: 07.30-10.00, 07:30-10:00, 7.30-10.00, dll.
-        pattern = r'^\s*\d{1,2}[:\.]\d{2}\s*[-–]\s*\d{1,2}[:\.]\d{2}\s*$'
-        return bool(re.match(pattern, time_str))
+        # Hapus kolom parsing sementara
+        df_clean = df_clean.drop(columns=['jam_mulai_parsed', 'jam_selesai_parsed'], errors='ignore')
+        
+        return df_clean
     
-    def get_available_sheets(self, file_path: str) -> List[str]:
-        """
-        Dapatkan list sheet yang tersedia di file Excel
+    def _validate_and_correct(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Validasi dan koreksi data"""
+        df_clean = df.copy()
         
-        Args:
-            file_path: Path ke file Excel
+        # Validasi durasi waktu
+        if all(col in df_clean.columns for col in ['jam_mulai', 'jam_selesai']):
+            invalid_rows = []
             
-        Returns:
-            List nama sheet
-        """
-        try:
-            xls = pd.ExcelFile(file_path)
-            return xls.sheet_names
-        except Exception as e:
-            print(f"❌ Error reading sheets: {e}")
-            return []
+            for idx, row in df_clean.iterrows():
+                start = parse_time(row['jam_mulai'])
+                end = parse_time(row['jam_selesai'])
+                
+                if start and end:
+                    # Cek jika start > end (mungkin ada kesalahan)
+                    start_minutes = start.hour * 60 + start.minute
+                    end_minutes = end.hour * 60 + end.minute
+                    
+                    if end_minutes < start_minutes:
+                        # Assume itu jadwal overnight atau swap
+                        df_clean.at[idx, 'jam_mulai'], df_clean.at[idx, 'jam_selesai'] = (
+                            df_clean.at[idx, 'jam_selesai'], 
+                            df_clean.at[idx, 'jam_mulai']
+                        )
+                        print(f"Corrected time order for row {idx}")
+        
+        # Validasi hari
+        if 'hari' in df_clean.columns:
+            valid_days = config.WORK_DAYS + config.WEEKEND
+            mask = df_clean['hari'].isin(valid_days)
+            if not mask.all():
+                invalid_days = df_clean[~mask]['hari'].unique()
+                print(f"Warning: Invalid days found: {invalid_days}")
+        
+        return df_clean
     
-    def get_data_summary(self, df: pd.DataFrame) -> dict:
-        """
-        Dapatkan summary dari data yang sudah dibersihkan
+    def extract_unique_values(self, df: pd.DataFrame) -> Dict[str, List[str]]:
+        """Extract nilai unik dari DataFrame"""
+        unique_values = {}
         
-        Args:
-            df: DataFrame yang sudah dibersihkan
-            
-        Returns:
-            Dictionary berisi summary statistik
-        """
+        if 'nama_dokter' in df.columns:
+            unique_values['doctors'] = sorted(df['nama_dokter'].dropna().unique().tolist())
+        
+        if 'spesialisasi' in df.columns:
+            unique_values['specializations'] = sorted(df['spesialisasi'].dropna().unique().tolist())
+        
+        if 'hari' in df.columns:
+            unique_values['days'] = sorted(df['hari'].dropna().unique().tolist())
+        
+        if 'ruangan' in df.columns:
+            unique_values['rooms'] = sorted(df['ruangan'].dropna().unique().tolist())
+        
+        return unique_values
+    
+    def calculate_schedule_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Hitung summary dari jadwal"""
         summary = {
-            'total_rows': len(df),
+            'total_schedules': len(df),
             'total_doctors': 0,
-            'total_poli': 0,
-            'non_empty_days': {}
+            'total_specializations': 0,
+            'total_hours': 0,
+            'daily_summary': {}
         }
         
-        if not df.empty:
-            if 'Nama Dokter' in df.columns:
-                summary['total_doctors'] = df['Nama Dokter'].nunique()
+        if df.empty:
+            return summary
+        
+        # Hitung total dokter unik
+        if 'nama_dokter' in df.columns:
+            summary['total_doctors'] = df['nama_dokter'].nunique()
+        
+        # Hitung total spesialisasi unik
+        if 'spesialisasi' in df.columns:
+            summary['total_specializations'] = df['spesialisasi'].nunique()
+        
+        # Hitung total jam kerja
+        if all(col in df.columns for col in ['jam_mulai', 'jam_selesai']):
+            total_hours = 0
+            for _, row in df.iterrows():
+                start = parse_time(row['jam_mulai'])
+                end = parse_time(row['jam_selesai'])
+                if start and end:
+                    duration = (end.hour - start.hour) + (end.minute - start.minute) / 60
+                    if duration > 0:
+                        total_hours += duration
             
-            if 'Poli Asal' in df.columns:
-                summary['total_poli'] = df['Poli Asal'].nunique()
-            
-            # Hitung data non-empty per hari
-            hari_cols = ['Senin', 'Selasa', 'Rabu', 'Kamis', "Jum'at", 'Sabtu']
-            for hari in hari_cols:
-                if hari in df.columns:
-                    non_empty = df[hari].notna().sum()
-                    summary['non_empty_days'][hari] = non_empty
+            summary['total_hours'] = round(total_hours, 2)
+        
+        # Summary per hari
+        if 'hari' in df.columns:
+            for day in config.WORK_DAYS:
+                day_data = df[df['hari'] == day]
+                if not day_data.empty:
+                    day_summary = {
+                        'schedules': len(day_data),
+                        'doctors': day_data['nama_dokter'].nunique() if 'nama_dokter' in day_data.columns else 0,
+                        'hours': 0
+                    }
+                    
+                    # Hitung jam per hari
+                    if all(col in day_data.columns for col in ['jam_mulai', 'jam_selesai']):
+                        day_hours = 0
+                        for _, row in day_data.iterrows():
+                            start = parse_time(row['jam_mulai'])
+                            end = parse_time(row['jam_selesai'])
+                            if start and end:
+                                duration = (end.hour - start.hour) + (end.minute - start.minute) / 60
+                                if duration > 0:
+                                    day_hours += duration
+                        day_summary['hours'] = round(day_hours, 2)
+                    
+                    summary['daily_summary'][day] = day_summary
         
         return summary
-
-
-# ============================================================
-# FUNGSI UTILITY (untuk backward compatibility)
-# ============================================================
-
-def clean_data(df_or_file):
-    """
-    Fungsi utility untuk backward compatibility
-    
-    Args:
-        df_or_file: Input data
-        
-    Returns:
-        DataFrame yang sudah dibersihkan
-    """
-    cleaner = DataCleaner()
-    return cleaner.clean(df_or_file)
-
-
-def validate_excel_file(file_path: str) -> bool:
-    """
-    Validasi file Excel
-    
-    Args:
-        file_path: Path ke file Excel
-        
-    Returns:
-        True jika file valid
-    """
-    try:
-        cleaner = DataCleaner()
-        df = cleaner._clean_from_excel(file_path)
-        return not df.empty
-    except:
-        return False
-
-
-# ============================================================
-# MODULE EXPORTS
-# ============================================================
-
-__all__ = ['DataCleaner', 'clean_data', 'validate_excel_file']
