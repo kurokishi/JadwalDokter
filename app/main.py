@@ -2,6 +2,7 @@
 Main module untuk aplikasi Streamlit
 """
 import streamlit as st
+from app.utils.parser import JadwalHafisParser
 from .config import config
 
 # Import UI functions
