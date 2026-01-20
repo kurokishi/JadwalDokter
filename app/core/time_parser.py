@@ -3,7 +3,6 @@ Modul untuk parsing dan manipulasi waktu
 """
 from datetime import datetime, time, date, timedelta
 from typing import List, Tuple, Optional, Dict, Any
-import re
 from ..config import TimeSlot, config
 from ..utils import parse_time
 
@@ -98,92 +97,3 @@ class TimeParser:
             end2 += 24 * 60
         
         return not (end1 <= start2 or end2 <= start1)
-    
-    @staticmethod
-    def merge_consecutive_slots(slots: List[TimeSlot]) -> List[TimeSlot]:
-        """Merge slot yang berurutan"""
-        if not slots:
-            return []
-        
-        # Sort by start time
-        sorted_slots = sorted(slots, key=lambda x: x.start)
-        
-        merged = []
-        current = sorted_slots[0]
-        
-        for slot in sorted_slots[1:]:
-            # Jika slot berurutan atau overlap
-            if (current.end.hour * 60 + current.end.minute >= 
-                slot.start.hour * 60 + slot.start.minute):
-                # Merge: extend end time if needed
-                if slot.end > current.end:
-                    current.end = slot.end
-            else:
-                merged.append(current)
-                current = slot
-        
-        merged.append(current)
-        
-        return merged
-    
-    @staticmethod
-    def calculate_daily_schedule(doctor_slots: List[TimeSlot], day: str) -> Dict[str, Any]:
-        """Hitung jadwal harian untuk dokter"""
-        # Filter slots untuk hari tertentu
-        day_slots = [slot for slot in doctor_slots if slot.day == day]
-        
-        if not day_slots:
-            return {
-                'day': day,
-                'has_schedule': False,
-                'total_slots': 0,
-                'total_hours': 0,
-                'slots': []
-            }
-        
-        # Merge consecutive slots
-        merged_slots = TimeParser.merge_consecutive_slots(day_slots)
-        
-        # Calculate totals
-        total_hours = TimeParser.calculate_working_hours(merged_slots)
-        
-        return {
-            'day': day,
-            'has_schedule': True,
-            'total_slots': len(merged_slots),
-            'total_hours': total_hours,
-            'slots': merged_slots
-        }
-    
-    @staticmethod
-    def format_time_range(start_time: time, end_time: time) -> str:
-        """Format range waktu menjadi string yang mudah dibaca"""
-        start_str = start_time.strftime("%H:%M")
-        end_str = end_time.strftime("%H:%M")
-        return f"{start_str} - {end_str}"
-    
-    @staticmethod
-    def get_time_difference(time1: time, time2: time) -> timedelta:
-        """Hitung perbedaan waktu antara dua time object"""
-        datetime1 = datetime.combine(date.today(), time1)
-        datetime2 = datetime.combine(date.today(), time2)
-        
-        if datetime2 < datetime1:
-            datetime2 += timedelta(days=1)
-        
-        return datetime2 - datetime1
-    
-    @staticmethod
-    def validate_time_order(start_time: time, end_time: time) -> Tuple[bool, str]:
-        """Validasi urutan waktu (start < end)"""
-        if start_time == end_time:
-            return False, "Waktu mulai dan selesai tidak boleh sama"
-        
-        if end_time < start_time:
-            # Mungkin overnight schedule
-            # Tambahkan 24 jam untuk end_time untuk perbandingan
-            end_time_adj = time((end_time.hour + 24) % 24, end_time.minute)
-            if end_time_adj < start_time:
-                return False, "Waktu selesai harus setelah waktu mulai"
-        
-        return True, "Waktu valid"
