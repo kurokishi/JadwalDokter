@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import re
 from datetime import datetime, time
-from typing import List, Dict, Any, Optional, Tuple
 import streamlit as st
 
 def clean_time_string(time_str: str) -> str:
@@ -61,7 +60,7 @@ def clean_single_time(time_str: str) -> str:
     
     return "00:00"
 
-def parse_time_range(time_str: str) -> Optional[Tuple[time, time]]:
+def parse_time_range(time_str: str):
     """Parse time range string to datetime.time objects"""
     if not time_str or time_str == '[Reference]':
         return None
@@ -107,7 +106,7 @@ def calculate_duration(start_time: time, end_time: time) -> float:
     
     return 0.0
 
-def validate_dataframe(df: pd.DataFrame) -> Tuple[bool, List[str]]:
+def validate_dataframe(df: pd.DataFrame):
     """Validate DataFrame structure and content"""
     errors = []
     
@@ -144,13 +143,13 @@ def filter_by_specialty(df: pd.DataFrame, specialty: str) -> pd.DataFrame:
         return df[df['specialty'] == specialty].copy()
     return df
 
-def get_unique_values(df: pd.DataFrame, column: str) -> List[str]:
+def get_unique_values(df: pd.DataFrame, column: str):
     """Get unique values from a column"""
     if column in df.columns:
         return sorted(df[column].dropna().unique().tolist())
     return []
 
-def create_summary_stats(df: pd.DataFrame) -> Dict[str, Any]:
+def create_summary_stats(df: pd.DataFrame):
     """Create summary statistics from DataFrame"""
     stats = {}
     
@@ -221,3 +220,6 @@ def format_single_time_display(time_str: str, format_24h: bool = True) -> str:
         pass
     
     return time_str
+
+# Need to import timedelta
+from datetime import timedelta
