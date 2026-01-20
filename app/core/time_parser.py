@@ -1,63 +1,189 @@
+"""
+Modul untuk parsing dan manipulasi waktu
+"""
+from datetime import datetime, time, date, timedelta
+from typing import List, Tuple, Optional, Dict, Any
 import re
-import pandas as pd
-from datetime import time, datetime
+from ..config import TimeSlot, config
+from ..utils import parse_time
 
 class TimeParser:
-    def __init__(self, start_hour=7, start_minute=30, interval_minutes=30):
-        self.start_hour = start_hour
-        self.start_minute = start_minute
-        self.interval_minutes = interval_minutes
+    """Utility untuk parsing dan manipulasi waktu"""
     
     @staticmethod
-    def parse(time_str):
-        """Static method untuk parse waktu (untuk backward compatibility)"""
-        if pd.isna(time_str) or str(time_str).strip() == "":
-            return None, None
-
-        s = str(time_str).strip().replace(" ", "").replace(".", ":")
-
-        m = re.search(r"(\d{1,2}:\d{2})-(\d{1,2}:\d{2})", s)
-        if not m:
-            return None, None
-
-        try:
-            sh, sm = map(int, m.group(1).split(":"))
-            eh, em = map(int, m.group(2).split(":"))
-            return time(sh, sm), time(eh, em)
-        except:
-            return None, None
+    def parse_time_range(start_str: str, end_str: str) -> Tuple[Optional[time], Optional[time]]:
+        """Parse range waktu dari string"""
+        start_time = parse_time(start_str)
+        end_time = parse_time(end_str)
+        
+        return start_time, end_time
     
-    def parse_time_range(self, time_range_str, slot_strings):
-        """
-        Parse string waktu ke list slot berdasarkan konfigurasi
-        """
-        start_time, end_time = self.parse(time_range_str)
-        if not start_time or not end_time:
+    @staticmethod
+    def split_into_slots(start_time: time, end_time: time, 
+                        duration_minutes: int = 60) -> List[TimeSlot]:
+        """Split waktu menjadi slot-slot dengan durasi tertentu"""
+        slots = []
+        
+        current_dt = datetime.combine(date.today(), start_time)
+        end_dt = datetime.combine(date.today(), end_time)
+        
+        # Handle overnight schedules
+        if end_dt < current_dt:
+            end_dt += timedelta(days=1)
+        
+        while current_dt + timedelta(minutes=duration_minutes) <= end_dt:
+            slot_end_dt = current_dt + timedelta(minutes=duration_minutes)
+            
+            slot = TimeSlot(
+                start=current_dt.time(),
+                end=slot_end_dt.time()
+            )
+            slots.append(slot)
+            
+            current_dt = slot_end_dt
+        
+        return slots
+    
+    @staticmethod
+    def calculate_working_hours(slots: List[TimeSlot]) -> float:
+        """Hitung total jam kerja dari slot-slot"""
+        total_hours = 0
+        for slot in slots:
+            total_hours += slot.duration
+        return total_hours
+    
+    @staticmethod
+    def find_available_slots(busy_slots: List[TimeSlot], day: str = "", 
+                           doctor: str = "") -> List[TimeSlot]:
+        """Temukan slot yang tersedia berdasarkan slot yang sudah terisi"""
+        # Generate semua slot untuk hari kerja
+        all_slots = config.get_time_slots()
+        
+        # Filter out busy slots
+        available_slots = []
+        
+        for slot in all_slots:
+            is_busy = False
+            
+            for busy in busy_slots:
+                # Cek overlap
+                if TimeParser._slots_overlap(slot, busy):
+                    is_busy = True
+                    break
+            
+            if not is_busy:
+                # Tambahkan info hari dan dokter jika disediakan
+                available_slot = TimeSlot(
+                    start=slot.start,
+                    end=slot.end,
+                    day=day,
+                    doctor=doctor
+                )
+                available_slots.append(available_slot)
+        
+        return available_slots
+    
+    @staticmethod
+    def _slots_overlap(slot1: TimeSlot, slot2: TimeSlot) -> bool:
+        """Cek jika dua slot overlap"""
+        start1 = slot1.start.hour * 60 + slot1.start.minute
+        end1 = slot1.end.hour * 60 + slot1.end.minute
+        start2 = slot2.start.hour * 60 + slot2.start.minute
+        end2 = slot2.end.hour * 60 + slot2.end.minute
+        
+        # Handle overnight
+        if end1 < start1:
+            end1 += 24 * 60
+        if end2 < start2:
+            end2 += 24 * 60
+        
+        return not (end1 <= start2 or end2 <= start1)
+    
+    @staticmethod
+    def merge_consecutive_slots(slots: List[TimeSlot]) -> List[TimeSlot]:
+        """Merge slot yang berurutan"""
+        if not slots:
             return []
         
-        result_slots = []
-        for slot in slot_strings:
-            slot_time = datetime.strptime(slot, "%H:%M").time()
-            if start_time <= slot_time < end_time:
-                result_slots.append(slot)
+        # Sort by start time
+        sorted_slots = sorted(slots, key=lambda x: x.start)
         
-        return result_slots
+        merged = []
+        current = sorted_slots[0]
+        
+        for slot in sorted_slots[1:]:
+            # Jika slot berurutan atau overlap
+            if (current.end.hour * 60 + current.end.minute >= 
+                slot.start.hour * 60 + slot.start.minute):
+                # Merge: extend end time if needed
+                if slot.end > current.end:
+                    current.end = slot.end
+            else:
+                merged.append(current)
+                current = slot
+        
+        merged.append(current)
+        
+        return merged
     
-    def generate_slot_strings(self):
-        """
-        Generate list slot berdasarkan konfigurasi start time dan interval
-        """
-        slot_strings = []
-        current_time = self.start_hour * 60 + self.start_minute
+    @staticmethod
+    def calculate_daily_schedule(doctor_slots: List[TimeSlot], day: str) -> Dict[str, Any]:
+        """Hitung jadwal harian untuk dokter"""
+        # Filter slots untuk hari tertentu
+        day_slots = [slot for slot in doctor_slots if slot.day == day]
         
-        # Generate sampai jam 14:30
-        end_time = 14 * 60 + 30
+        if not day_slots:
+            return {
+                'day': day,
+                'has_schedule': False,
+                'total_slots': 0,
+                'total_hours': 0,
+                'slots': []
+            }
         
-        while current_time < end_time:
-            hours = current_time // 60
-            minutes = current_time % 60
-            time_str = f"{hours:02d}:{minutes:02d}"
-            slot_strings.append(time_str)
-            current_time += self.interval_minutes
+        # Merge consecutive slots
+        merged_slots = TimeParser.merge_consecutive_slots(day_slots)
         
-        return slot_strings
+        # Calculate totals
+        total_hours = TimeParser.calculate_working_hours(merged_slots)
+        
+        return {
+            'day': day,
+            'has_schedule': True,
+            'total_slots': len(merged_slots),
+            'total_hours': total_hours,
+            'slots': merged_slots
+        }
+    
+    @staticmethod
+    def format_time_range(start_time: time, end_time: time) -> str:
+        """Format range waktu menjadi string yang mudah dibaca"""
+        start_str = start_time.strftime("%H:%M")
+        end_str = end_time.strftime("%H:%M")
+        return f"{start_str} - {end_str}"
+    
+    @staticmethod
+    def get_time_difference(time1: time, time2: time) -> timedelta:
+        """Hitung perbedaan waktu antara dua time object"""
+        datetime1 = datetime.combine(date.today(), time1)
+        datetime2 = datetime.combine(date.today(), time2)
+        
+        if datetime2 < datetime1:
+            datetime2 += timedelta(days=1)
+        
+        return datetime2 - datetime1
+    
+    @staticmethod
+    def validate_time_order(start_time: time, end_time: time) -> Tuple[bool, str]:
+        """Validasi urutan waktu (start < end)"""
+        if start_time == end_time:
+            return False, "Waktu mulai dan selesai tidak boleh sama"
+        
+        if end_time < start_time:
+            # Mungkin overnight schedule
+            # Tambahkan 24 jam untuk end_time untuk perbandingan
+            end_time_adj = time((end_time.hour + 24) % 24, end_time.minute)
+            if end_time_adj < start_time:
+                return False, "Waktu selesai harus setelah waktu mulai"
+        
+        return True, "Waktu valid"
