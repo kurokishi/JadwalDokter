@@ -1,17 +1,50 @@
 """
-Package UI - komponen Streamlit untuk aplikasi Jadwal Dokter
+Package utama aplikasi Jadwal Dokter
 """
 
-from .home import render as render_home
-from .tab_upload import render as render_upload
-from .tab_schedule import render as render_schedule
-from .tab_kanban_drag import render as render_kanban
-from .tab_preferences import render as render_preferences
-from .tab_about import render as render_about
+__version__ = "1.0.0"
+__author__ = "Tim Pengembang"
+
+# Ekspor modul utama
+from . import config
+from . import main
+from . import utils
+
+# Ekspor dari core
+from .core import (
+    DataCleaner,
+    ScheduleParser,
+    TimeParser,
+    DataValidator,
+    TemplateParser
+)
+
+# Ekspor dari ui
+from .ui import (
+    render_home,
+    render_upload,
+    render_schedule,
+    render_kanban,
+    render_preferences,
+    render_about
+)
 
 __all__ = [
+    # Module
+    'config',
+    'main',
+    'utils',
+    
+    # Core classes
+    'DataCleaner',
+    'ScheduleParser',
+    'TimeParser',
+    'DataValidator',
+    'TemplateParser',
+    
+    # UI functions
     'render_home',
-    'render_upload', 
+    'render_upload',
     'render_schedule',
     'render_kanban',
     'render_preferences',
