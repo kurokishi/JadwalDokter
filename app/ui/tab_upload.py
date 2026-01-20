@@ -98,4 +98,69 @@ def render():
                 st.error(f"❌ Error membaca file: {str(e)}")
     
     with col2:
-        st.subheader("📋 Pand
+        st.subheader("📋 Panduan Upload")
+        
+        st.markdown("""
+        ### Format Data yang Didukung:
+        
+        **File:**
+        - Excel (.xlsx, .xls)
+        - CSV (.csv)
+        
+        **Kolom Wajib:**
+        1. `nama_dokter` - Nama dokter
+        2. `spesialisasi` - Spesialisasi dokter
+        3. `hari` - Hari praktik
+        4. `jam_mulai` - Waktu mulai
+        5. `jam_selesai` - Waktu selesai
+        
+        **Kolom Opsional:**
+        - `ruangan` - Nomor ruangan
+        - `poliklinik` - Nama poliklinik
+        - `kapasitas` - Kapasitas pasien
+        - `catatan` - Catatan tambahan
+        """)
+        
+        st.markdown("---")
+        
+        # Download template
+        st.subheader("📥 Download Template")
+        
+        template_type = st.selectbox(
+            "Pilih jenis template",
+            ["standard", "simple"],
+            help="Standard: lengkap dengan semua kolom. Simple: hanya kolom utama."
+        )
+        
+        if st.button("⬇️ Download Template", use_container_width=True):
+            template_parser = TemplateParser()
+            sample_df = template_parser.create_sample_template(template_type)
+            
+            # Convert to CSV
+            csv = sample_df.to_csv(index=False)
+            
+            st.download_button(
+                label="💾 Download CSV",
+                data=csv,
+                file_name=f"template_jadwal_{template_type}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        st.markdown("---")
+        
+        # Quick actions jika ada data
+        if 'uploaded_data' in st.session_state and st.session_state.uploaded_data is not None:
+            st.subheader("⚡ Aksi Cepat")
+            
+            df = st.session_state.uploaded_data
+            
+            # Download data yang sudah diupload
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="📊 Download Data",
+                data=csv,
+                file_name="jadwal_dokter_cleaned.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
