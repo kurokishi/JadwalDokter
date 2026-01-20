@@ -5,7 +5,6 @@ from datetime import datetime, time, date
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import json
-import streamlit as st
 
 @dataclass
 class TimeSlot:
@@ -132,6 +131,7 @@ class AppConfig:
     @classmethod
     def get_time_slots(cls, include_lunch_break: bool = True) -> List[TimeSlot]:
         """Generate semua time slot untuk satu hari"""
+        import datetime as dt
         slots = []
         current_time = datetime.combine(date.today(), cls.WORK_START)
         end_time = datetime.combine(date.today(), cls.WORK_END)
@@ -139,7 +139,7 @@ class AppConfig:
         lunch_end = datetime.combine(date.today(), cls.LUNCH_END)
         
         while current_time < end_time:
-            slot_end = current_time + datetime.timedelta(minutes=cls.TIME_SLOT_DURATION)
+            slot_end = current_time + dt.timedelta(minutes=cls.TIME_SLOT_DURATION)
             
             # Lewati waktu istirahat jika include_lunch_break=True
             if include_lunch_break:
@@ -157,39 +157,6 @@ class AppConfig:
             current_time = slot_end
         
         return slots
-    
-    @classmethod
-    def get_day_color(cls, day: str) -> str:
-        """Dapatkan warna untuk hari tertentu"""
-        day_colors = {
-            "Senin": "#FFEBEE",
-            "Selasa": "#F3E5F5",
-            "Rabu": "#E8EAF6",
-            "Kamis": "#E0F2F1",
-            "Jumat": "#FFF8E1",
-            "Sabtu": "#F1F8E9",
-            "Minggu": "#ECEFF1"
-        }
-        return day_colors.get(day, "#FFFFFF")
-    
-    @classmethod
-    def save_preferences(cls, preferences: Dict[str, Any]):
-        """Simpan preferensi ke session state"""
-        for key, value in preferences.items():
-            st.session_state[f"pref_{key}"] = value
-    
-    @classmethod
-    def load_preferences(cls) -> Dict[str, Any]:
-        """Load preferensi dari session state"""
-        preferences = {}
-        prefix = "pref_"
-        
-        for key in st.session_state.keys():
-            if key.startswith(prefix):
-                pref_key = key[len(prefix):]
-                preferences[pref_key] = st.session_state[key]
-        
-        return preferences
 
 # Instance global
 config = AppConfig()
