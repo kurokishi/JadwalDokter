@@ -24,7 +24,11 @@ def initialize_session_state():
         'specializations': [],
         'preferences': {},
         'current_view': 'home',
-        'notification': None
+        'notification': None,
+        'total_doctors': 0,
+        'total_schedules': 0,
+        'total_hours': 0,
+        'conflicts': []
     }
     
     for key, default_value in default_states.items():
@@ -188,62 +192,6 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             df_clean[col] = df_clean[col].str.title()
     
     return df_clean
-
-def generate_color_from_text(text: str) -> str:
-    """Generate warna konsisten dari text"""
-    # Hash function untuk mendapatkan angka dari text
-    hash_object = hashlib.md5(text.encode())
-    hash_hex = hash_object.hexdigest()[:6]
-    
-    # Konversi ke RGB dan adjust untuk warna yang bagus
-    r = int(hash_hex[0:2], 16) % 180 + 50
-    g = int(hash_hex[2:4], 16) % 180 + 50
-    b = int(hash_hex[4:6], 16) % 180 + 50
-    
-    return f"rgb({r}, {g}, {b})"
-
-def create_metrics_card(title: str, value: Any, delta: Optional[str] = None, 
-                       color: Optional[str] = None):
-    """Buat metric card yang menarik"""
-    from .config import config
-    
-    if color is None:
-        color = config.COLORS['primary']
-    
-    st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, {color}20, {color}10);
-            border: 1px solid {color}30;
-            border-radius: 10px;
-            padding: 20px;
-            text-align: center;
-            margin: 10px 0;
-        ">
-            <div style="color: #666; font-size: 14px; margin-bottom: 8px;">
-                {title}
-            </div>
-            <div style="color: {color}; font-size: 28px; font-weight: bold; margin-bottom: 5px;">
-                {value}
-            </div>
-            {f'<div style="color: #4CAF50; font-size: 12px;">{delta}</div>' if delta else ''}
-        </div>
-    """, unsafe_allow_html=True)
-
-def filter_dataframe(df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFrame:
-    """Filter DataFrame berdasarkan kriteria"""
-    if df.empty:
-        return df
-    
-    df_filtered = df.copy()
-    
-    for column, value in filters.items():
-        if column in df_filtered.columns and value:
-            if isinstance(value, list):
-                df_filtered = df_filtered[df_filtered[column].isin(value)]
-            else:
-                df_filtered = df_filtered[df_filtered[column] == value]
-    
-    return df_filtered
 
 def get_unique_values(df: pd.DataFrame, column: str) -> List[str]:
     """Dapatkan nilai unik dari kolom"""
