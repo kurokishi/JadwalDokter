@@ -1,237 +1,230 @@
-# app/ui/tab_upload.py
+"""
+Tab untuk upload dan validasi data
+"""
 import streamlit as st
 import pandas as pd
 import io
-import traceback
-from datetime import datetime  # ✅ IMPORT datetime di sini
+from datetime import datetime
+from ..config import config
+from ..utils import show_message, create_download_link, validate_dataframe
+from ..core import DataValidator, TemplateParser, DataCleaner
 
-def render_upload_tab(scheduler, writer, analyzer, validator, config):
-    st.subheader("📤 Upload & Proses Jadwal")
+def render():
+    """Render tab upload"""
+    st.header("📤 Upload Data Jadwal")
     
-    # ======================================================
-    # UPLOAD FILE SECTION (SELALU TAMPIL)
-    # ======================================================
-    uploaded_file = st.file_uploader(
-        "Upload file Excel (Template KSM atau format Reguler/Poleks)",
-        type=['xlsx', 'xls'],
-        help="Mendukung template baru (format KSM dengan JAM KERJA/REGULER/EKSEKUTIF) atau format lama (sheet Reguler/Poleks)",
-        key="file_uploader"
-    )
+    # Dua kolom utama
+    col1, col2 = st.columns([2, 1])
     
-    # ======================================================
-    # FILE PROCESSING SECTION
-    # ======================================================
-    if uploaded_file is not None:
-        # Simpan file bytes ke session state JIKA belum ada atau file berbeda
-        if ("uploaded_file_bytes" not in st.session_state or 
-            st.session_state.get("uploaded_file_name") != uploaded_file.name):
-            
-            st.session_state["uploaded_file_bytes"] = uploaded_file.getvalue()
-            st.session_state["uploaded_file_name"] = uploaded_file.name
-            st.session_state["processed_data"] = None
-            st.session_state["slot_strings"] = None
-            print(f"✅ File saved to session: {uploaded_file.name}")
+    with col1:
+        # File uploader
+        uploaded_file = st.file_uploader(
+            "Pilih file Excel atau CSV",
+            type=config.ALLOWED_EXTENSIONS,
+            help=f"Format yang didukung: {', '.join(config.ALLOWED_EXTENSIONS)}. Maksimum {config.MAX_FILE_SIZE_MB}MB."
+        )
         
-        # Tampilkan file info
-        st.success(f"✅ File terupload: **{uploaded_file.name}**")
-        
-        # Preview file
-        with st.expander("📄 Preview File Upload", expanded=False):
+        if uploaded_file is not None:
             try:
-                file_stream = io.BytesIO(st.session_state["uploaded_file_bytes"])
-                excel_data = pd.ExcelFile(file_stream)
-                st.write(f"**Sheet yang ditemukan:** {excel_data.sheet_names}")
+                # Baca file
+                file_bytes = uploaded_file.read()
                 
-                for sheet in ['Reguler', 'Poleks']:
-                    if sheet in excel_data.sheet_names:
-                        file_stream.seek(0)
-                        df_sheet = pd.read_excel(file_stream, sheet_name=sheet)
-                        st.write(f"**Sheet {sheet}:** {len(df_sheet)} baris")
-                        st.dataframe(df_sheet.head(3), width='stretch')
+                # Validasi ukuran file
+                if len(file_bytes) > config.MAX_FILE_SIZE_MB * 1024 * 1024:
+                    show_message(f"File terlalu besar. Maksimum {config.MAX_FILE_SIZE_MB}MB", "error")
+                    return
+                
+                # Parse file
+                template_parser = TemplateParser()
+                df, warnings = template_parser.parse_file(file_bytes, uploaded_file.name)
+                
+                # Tampilkan warnings jika ada
+                if warnings:
+                    for warning in warnings:
+                        show_message(warning, "warning")
+                
+                # Validasi data
+                validator = DataValidator()
+                is_valid, errors = validator.validate_dataframe(df)
+                
+                if not is_valid:
+                    st.error("❌ Data tidak valid!")
+                    for error in errors:
+                        st.warning(f"⚠️ {error}")
+                    
+                    # Tampilkan data meski ada error
+                    with st.expander("👀 Lihat Data (dengan error)", expanded=False):
+                        st.dataframe(df, use_container_width=True)
+                    
+                    return
+                
+                # Clean data
+                cleaner = DataCleaner()
+                df_clean = cleaner.clean_dataframe(df)
+                
+                # Tampilkan success message
+                show_message("✅ File berhasil diupload dan divalidasi!", "success")
+                
+                # Tampilkan preview
+                st.subheader("📋 Preview Data")
+                
+                # Tampilkan statistik cepat
+                stats_col1, stats_col2, stats_col3 = st.columns(3)
+                with stats_col1:
+                    st.metric("Jumlah Baris", len(df_clean))
+                with stats_col2:
+                    st.metric("Jumlah Kolom", len(df_clean.columns))
+                with stats_col3:
+                    if 'nama_dokter' in df_clean.columns:
+                        st.metric("Dokter Unik", df_clean['nama_dokter'].nunique())
+                
+                # Tampilkan data
+                st.dataframe(df_clean.head(20), use_container_width=True)
+                
+                # Simpan ke session state
+                st.session_state['uploaded_data'] = df_clean
+                st.session_state['file_name'] = uploaded_file.name
+                st.session_state['upload_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state['validation_errors'] = errors
+                
+                # Extract unique values
+                unique_values = cleaner.extract_unique_values(df_clean)
+                st.session_state['doctors_list'] = unique_values.get('doctors', [])
+                st.session_state['specializations'] = unique_values.get('specializations', [])
+                
+                # Calculate summary
+                summary = cleaner.calculate_schedule_summary(df_clean)
+                st.session_state['schedule_summary'] = summary
+                
             except Exception as e:
-                st.warning(f"Tidak bisa preview file: {e}")
-        
-        # ======================================================
-        # PROCESS BUTTON (SELALU TAMPIL JIKA ADA FILE)
-        # ======================================================
-        if st.button("🚀 Proses Jadwal", type="primary", width='stretch', 
-                    key="process_button"):
-            
-            with st.spinner("Memproses data... Mohon tunggu"):
-                try:
-                    # Validasi file
-                    file_stream = io.BytesIO(st.session_state["uploaded_file_bytes"])
-                    is_valid, message = validator.validate_excel_file(file_stream)
-                    
-                    if not is_valid:
-                        st.error(f"❌ File tidak valid: {message}")
-                        st.stop()
-                    
-                    # Proses data
-                    file_stream.seek(0)
-                    grid_df, slot_strings, errors = scheduler.process_dataframe(file_stream)
-                    
-                    if grid_df is not None:
-                        # Simpan hasil ke session state
-                        st.session_state["processed_data"] = grid_df
-                        st.session_state["slot_strings"] = slot_strings
-                        st.session_state["processing_errors"] = errors
-                        
-                        st.success(f"✅ Data berhasil diproses! ({len(grid_df)} baris, {len(slot_strings)} slot waktu)")
-                        
-                        # Tampilkan preview
-                        with st.expander("📋 Preview Hasil Proses", expanded=True):
-                            st.write(f"**Dimensi data:** {grid_df.shape[0]} baris × {grid_df.shape[1]} kolom")
-                            st.dataframe(grid_df.head(), width='stretch')
-                        
-                        # Tampilkan errors jika ada
-                        if errors:
-                            st.warning(f"⚠️ **{len(errors)} peringatan:**")
-                            for error in errors[:3]:
-                                st.write(f"- {error}")
-                            if len(errors) > 3:
-                                st.write(f"- ... dan {len(errors) - 3} lainnya")
-                    
-                    else:
-                        st.error("❌ Gagal memproses data")
-                        if errors:
-                            for error in errors:
-                                st.write(f"- {error}")
-                
-                except Exception as e:
-                    st.error(f"❌ Error saat memproses: {str(e)}")
-                    st.code(traceback.format_exc())
+                st.error(f"❌ Error membaca file: {str(e)}")
+                st.code(str(e))
     
-    # ======================================================
-    # RESULTS SECTION (SELALU TAMPIL JIKA ADA DATA DI SESSION)
-    # ======================================================
-    if ("processed_data" in st.session_state and 
-        st.session_state["processed_data"] is not None):
+    with col2:
+        st.subheader("📋 Panduan Upload")
         
-        st.divider()
-        st.subheader("📊 Hasil Proses")
+        st.markdown("""
+        ### Format Data yang Didukung:
         
-        grid_df = st.session_state["processed_data"]
-        slot_strings = st.session_state["slot_strings"]
+        **File:**
+        - Excel (.xlsx, .xls)
+        - CSV (.csv)
         
-        st.write(f"✅ **Data tersedia:** {len(grid_df)} baris, {len(slot_strings)} slot waktu")
+        **Kolom Wajib:**
+        1. `nama_dokter` - Nama dokter
+        2. `spesialisasi` - Spesialisasi dokter
+        3. `hari` - Hari praktik
+        4. `jam_mulai` - Waktu mulai
+        5. `jam_selesai` - Waktu selesai
         
-        # ======================================================
-        # DOWNLOAD BUTTONS (SELALU TAMPIL JIKA ADA DATA)
-        # ======================================================
-        st.subheader("💾 Download Hasil")
+        **Kolom Opsional:**
+        - `ruangan` - Nomor ruangan
+        - `poliklinik` - Nama poliklinik
+        - `kapasitas` - Kapasitas pasien
+        - `catatan` - Catatan tambahan
+        """)
         
-        col1, col2, col3 = st.columns(3)
+        st.markdown("---")
+        
+        # Download template
+        st.subheader("📥 Download Template")
+        
+        template_type = st.selectbox(
+            "Pilih jenis template",
+            ["standard", "simple"],
+            help="Standard: lengkap dengan semua kolom. Simple: hanya kolom utama."
+        )
+        
+        if st.button("⬇️ Download Template", use_container_width=True):
+            template_parser = TemplateParser()
+            sample_df = template_parser.create_sample_template(template_type)
+            
+            # Convert to CSV
+            csv = sample_df.to_csv(index=False)
+            
+            st.download_button(
+                label="💾 Download CSV",
+                data=csv,
+                file_name=f"template_jadwal_{template_type}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        st.markdown("---")
+        
+        # Quick actions jika ada data
+        if 'uploaded_data' in st.session_state and st.session_state.uploaded_data is not None:
+            st.subheader("⚡ Aksi Cepat")
+            
+            df = st.session_state.uploaded_data
+            
+            # Download data yang sudah diupload
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="📊 Download Data",
+                data=csv,
+                file_name="jadwal_dokter_cleaned.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+            # Lihat statistik
+            if st.button("📈 Lihat Statistik", use_container_width=True):
+                if 'schedule_summary' in st.session_state:
+                    summary = st.session_state.schedule_summary
+                    
+                    st.info("📊 **Statistik Data**")
+                    st.metric("Total Jadwal", summary.get('total_schedules', 0))
+                    st.metric("Total Dokter", summary.get('total_doctors', 0))
+                    st.metric("Total Jam Kerja", f"{summary.get('total_hours', 0):.1f} jam")
+                    
+                    # Tampilkan summary per hari
+                    st.subheader("📅 Summary per Hari")
+                    for day, day_summary in summary.get('daily_summary', {}).items():
+                        st.markdown(f"**{day}:** {day_summary['schedules']} jadwal, {day_summary['hours']} jam")
+    
+    # Validasi detail jika ada data
+    if 'uploaded_data' in st.session_state and st.session_state.uploaded_data is not None:
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("📥 Download Excel Hasil", width='stretch', key="download_excel"):
-                st.session_state["download_clicked"] = True
+            st.subheader("✅ Validasi Data")
+            
+            validator = DataValidator()
+            df = st.session_state.uploaded_data
+            validation_summary = validator.get_validation_summary(df)
+            
+            # Tampilkan score
+            score = validation_summary.get('data_quality_score', 0)
+            score_color = "green" if score >= 80 else "orange" if score >= 60 else "red"
+            
+            st.markdown(f"""
+                <div style="text-align: center; padding: 20px; background-color: #f8f9fa; border-radius: 10px;">
+                    <h3 style="color: {score_color}; margin: 0;">Skor Kualitas Data</h3>
+                    <h1 style="color: {score_color}; margin: 10px 0;">{score}/100</h1>
+                    <p style="color: #666;">
+                        {validation_summary['total_rows']} baris × {validation_summary['total_columns']} kolom
+                    </p>
+                </div>
+            """, unsafe_allow_html=True)
         
         with col2:
-            if st.button("📄 Download Template", width='stretch', key="download_template"):
-                st.session_state["download_template"] = True
-        
-        with col3:
-            if st.button("🔄 Proses Ulang", width='stretch', key="reprocess"):
-                for key in ["processed_data", "slot_strings", "processing_errors"]:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                st.rerun()
-        
-        # ======================================================
-        # ACTUAL DOWNLOAD HANDLING
-        # ======================================================
-        
-        # Handle Excel download
-        if st.session_state.get("download_clicked", False):
-            try:
-                st.session_state["download_clicked"] = False
+            st.subheader("⚠️ Issues")
+            
+            errors = validation_summary.get('errors', [])
+            if errors:
+                st.warning(f"Terdapat {len(errors)} masalah yang terdeteksi:")
                 
-                with st.spinner("Membuat file Excel..."):
-                    # Buat stream baru
-                    file_stream = io.BytesIO(st.session_state["uploaded_file_bytes"])
-                    
-                    # Generate Excel - gunakan datetime dari import global
-                    output_buffer = writer.write(
-                        source_file=file_stream,
-                        df_grid=grid_df,
-                        slot_str=slot_strings
-                    )
-                    
-                    # Buat nama file dengan timestamp
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    filename = f"jadwal_hasil_{timestamp}.xlsx"
-                    
-                    # Tampilkan download button
-                    st.download_button(
-                        label=f"⬇️ Download: {filename}",
-                        data=output_buffer,
-                        file_name=filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        width='stretch',
-                        key="excel_download_button"
-                    )
-                    
-                    st.success("✅ File Excel siap di-download!")
-            
-            except Exception as e:
-                st.error(f"❌ Gagal membuat file Excel: {str(e)}")
-                st.code(traceback.format_exc())
-        
-        # Handle Template download
-        if st.session_state.get("download_template", False):
-            try:
-                st.session_state["download_template"] = False
+                # Tampilkan maksimal 5 error
+                for error in errors[:5]:
+                    st.markdown(f"- {error}")
                 
-                template_buffer = writer.generate_template(slot_strings)
+                if len(errors) > 5:
+                    st.markdown(f"... dan {len(errors) - 5} masalah lainnya")
+            else:
+                st.success("✅ Tidak ada masalah yang terdeteksi")
                 
-                st.download_button(
-                    label="⬇️ Klik untuk download Template",
-                    data=template_buffer,
-                    file_name="template_jadwal.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    width='stretch',
-                    key="template_download_button"
-                )
-                
-                st.success("✅ Template siap di-download!")
-            
-            except Exception as e:
-                st.error(f"❌ Gagal membuat template: {str(e)}")
-    
-    # ======================================================
-    # NO FILE UPLOADED STATE
-    # ======================================================
-    elif uploaded_file is None:
-        st.info("📤 Silakan upload file Excel jadwal dokter")
-        
-        with st.expander("ℹ️ Panduan Format File"):
-            st.markdown("""
-            **Aplikasi mendukung 2 format file:**
-            
-            ---
-            
-            **1. Format Template Baru (KSM-based)** *(Direkomendasikan)*
-            
-            Struktur:
-            - Baris 1: Header (KSM, Nama dokter, POLI, JAM PRAKTIK)
-            - Baris 2: Nama hari (SENIN, SELASA, RABU, KAMIS, JUMAT, SABTU)
-            - Setiap dokter memiliki 3 baris:
-              - JAM KERJA: Jam kerja dokter
-              - REGULER: Jadwal praktik reguler
-              - EKSEKUTIF: Jadwal praktik eksekutif/poleks
-            
-            ---
-            
-            **2. Format Lama (Reguler/Poleks sheets)**
-            
-            - Sheet 'Reguler': Berisi jadwal reguler
-            - Sheet 'Poleks': Berisi jadwal poleks
-            - Kolom: Nama Dokter, Poli Asal, Senin, Selasa, Rabu, Kamis, Jum'at
-            
-            ---
-            
-            **Format waktu yang didukung:**
-            - `07.30-10.00` atau `07:30-10:00`
-            - `08.00-09.00, 10.00-11.00` (beberapa rentang waktu)
-            """)
+                # Tampilkan rekomendasi
+                st.info("**💡 Rekomendasi:** Data sudah bersih dan siap untuk diproses lebih lanjut di tab **📅 Jadwal**")
