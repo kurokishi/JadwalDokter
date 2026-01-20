@@ -1,4 +1,3 @@
-# app/main.py
 """
 Main module untuk aplikasi Streamlit
 """
