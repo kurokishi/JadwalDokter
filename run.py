@@ -1,5 +1,5 @@
 """
-Entry point untuk aplikasi Jadwal Dokter dengan support file jadwal_hafis.xlsx
+Entry point untuk aplikasi Jadwal Dokter
 """
 import sys
 import os
@@ -18,12 +18,7 @@ def main():
         
     except Exception as e:
         st.error(f"❌ Error starting application: {str(e)}")
-        st.info("""
-        **Troubleshooting:**
-        1. Pastikan semua file berada di struktur yang benar
-        2. Install requirements: `pip install -r requirements.txt`
-        3. Untuk file jadwal_hafis.xlsx, pastikan format sesuai
-        """)
+        st.info("Please check the error details above.")
 
 if __name__ == "__main__":
     main()
