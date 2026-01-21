@@ -3,7 +3,6 @@ Utility functions for Jadwal Dokter App
 """
 import pandas as pd
 import re
-from datetime import datetime, time, timedelta
 
 def clean_time_string(time_str: str) -> str:
     """
@@ -71,40 +70,12 @@ def convert_to_indonesian_day(day_english: str) -> str:
     }
     return day_map.get(day_english, day_english)
 
-def format_time_display(time_str: str, format_24h: bool = True) -> str:
+def format_time_display(time_str: str) -> str:
     """Format time for display"""
-    if not time_str or pd.isna(time_str):
+    if not time_str or pd.isna(time_str) or str(time_str).strip() in ['', '-', '[Reference]']:
         return "-"
     
-    # If already formatted as range
-    if '-' in time_str:
-        parts = time_str.split('-')
-        if len(parts) == 2:
-            start = format_single_time_display(parts[0], format_24h)
-            end = format_single_time_display(parts[1], format_24h)
-            return f"{start} - {end}"
-    
-    return format_single_time_display(time_str, format_24h)
-
-def format_single_time_display(time_str: str, format_24h: bool = True) -> str:
-    """Format single time for display"""
-    try:
-        if ':' in time_str:
-            hours, minutes = map(int, time_str.split(':'))
-            
-            if not format_24h:
-                # Convert to 12-hour format
-                period = "AM" if hours < 12 else "PM"
-                hours_12 = hours if hours <= 12 else hours - 12
-                if hours_12 == 0:
-                    hours_12 = 12
-                return f"{hours_12}:{minutes:02d} {period}"
-            else:
-                return f"{hours:02d}:{minutes:02d}"
-    
-    except:
-        pass
-    
+    time_str = str(time_str).strip()
     return time_str
 
 def get_unique_values(df: pd.DataFrame, column: str):
@@ -112,3 +83,19 @@ def get_unique_values(df: pd.DataFrame, column: str):
     if column in df.columns:
         return sorted(df[column].dropna().unique().tolist())
     return []
+
+def validate_dataframe(df: pd.DataFrame):
+    """Validate DataFrame structure"""
+    errors = []
+    
+    if df.empty:
+        errors.append("DataFrame is empty")
+        return False, errors
+    
+    # Check for required columns
+    required_columns = ['doctor_name', 'specialty', 'day']
+    for col in required_columns:
+        if col not in df.columns:
+            errors.append(f"Missing column: {col}")
+    
+    return len(errors) == 0, errors
