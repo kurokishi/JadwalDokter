@@ -1,101 +1,169 @@
 """
-Utility functions for Jadwal Dokter App
+Utility functions for Jadwal Dokter Converter
 """
+import streamlit as st
 import pandas as pd
 import re
+from datetime import datetime, time
+from typing import Optional, Tuple, List, Dict
+import io
 
-def clean_time_string(time_str: str) -> str:
+
+def init_session_state():
+    """Initialize session state variables"""
+    if 'grid_data' not in st.session_state:
+        st.session_state.grid_data = None
+    if 'original_data' not in st.session_state:
+        st.session_state.original_data = None
+    if 'file_name' not in st.session_state:
+        st.session_state.file_name = None
+    if 'parsed_data' not in st.session_state:
+        st.session_state.parsed_data = None
+    if 'conversion_stats' not in st.session_state:
+        st.session_state.conversion_stats = {}
+    if 'export_data' not in st.session_state:
+        st.session_state.export_data = None
+
+
+def parse_time_string(time_str: str) -> Optional[Tuple[str, str]]:
     """
-    Clean and standardize time string
-    Converts various formats to HH:MM
-    """
-    if pd.isna(time_str) or time_str in ['', '-', 'nan', 'None']:
-        return ""
+    Parse time string to start and end time
     
-    # Convert to string
+    Args:
+        time_str: Time string like "07:30-14:00" or "07.30-14.00"
+    
+    Returns:
+        Tuple of (start_time, end_time) or None
+    """
+    if pd.isna(time_str) or not isinstance(time_str, str):
+        return None
+    
+    # Clean the string
     time_str = str(time_str).strip()
-    
-    # Remove Excel references
-    if time_str.startswith('='):
-        return "[Reference]"
-    
-    # Convert dot format to colon (07.30 -> 07:30)
-    time_str = re.sub(r'(\d{1,2})\.(\d{2})', r'\1:\2', time_str)
-    
-    # Remove all spaces
-    time_str = re.sub(r'\s+', '', time_str)
-    
-    # Ensure proper format
-    if '-' in time_str:
-        parts = time_str.split('-')
-        if len(parts) == 2:
-            start = clean_single_time(parts[0])
-            end = clean_single_time(parts[1])
-            return f"{start}-{end}"
-    
-    return clean_single_time(time_str)
-
-def clean_single_time(time_str: str) -> str:
-    """Clean single time string to HH:MM format"""
-    if not time_str:
-        return ""
-    
-    # Remove non-numeric and non-colon characters
-    time_str = re.sub(r'[^\d:]', '', time_str)
     
     # Handle various formats
-    if ':' in time_str:
-        parts = time_str.split(':')
-        if len(parts) >= 2:
-            hours = parts[0].zfill(2)
-            minutes = parts[1].zfill(2) if len(parts[1]) > 0 else '00'
-            return f"{hours}:{minutes}"
+    time_str = time_str.replace('.', ':')
     
-    # Handle HHMM format
-    elif len(time_str) == 4:
-        return f"{time_str[:2]}:{time_str[2:]}"
+    # Pattern for time range
+    pattern = r'(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})'
+    match = re.search(pattern, time_str)
     
-    return "00:00"
+    if match:
+        start_time = match.group(1)
+        end_time = match.group(2)
+        
+        # Validate times
+        if is_valid_time(start_time) and is_valid_time(end_time):
+            return (start_time, end_time)
+    
+    # Try single time
+    pattern_single = r'(\d{1,2}:\d{2})'
+    match_single = re.search(pattern_single, time_str)
+    
+    if match_single:
+        single_time = match_single.group(1)
+        if is_valid_time(single_time):
+            return (single_time, single_time)
+    
+    return None
 
-def convert_to_indonesian_day(day_english: str) -> str:
-    """Convert English day name to Indonesian"""
-    day_map = {
-        'Monday': 'Senin',
-        'Tuesday': 'Selasa',
-        'Wednesday': 'Rabu',
-        'Thursday': 'Kamis',
-        'Friday': 'Jumat',
-        'Saturday': 'Sabtu',
-        'Sunday': 'Minggu'
+
+def is_valid_time(time_str: str) -> bool:
+    """Check if time string is valid"""
+    try:
+        if ':' in time_str:
+            hour, minute = map(int, time_str.split(':'))
+        else:
+            return False
+        
+        return 0 <= hour < 24 and 0 <= minute < 60
+    except:
+        return False
+
+
+def time_to_minutes(time_str: str) -> int:
+    """Convert time string to minutes since midnight"""
+    try:
+        hour, minute = map(int, time_str.split(':'))
+        return hour * 60 + minute
+    except:
+        return 0
+
+
+def minutes_to_time(minutes: int) -> str:
+    """Convert minutes since midnight to time string"""
+    hour = minutes // 60
+    minute = minutes % 60
+    return f"{hour:02d}:{minute:02d}"
+
+
+def create_time_slots(start_time: str, end_time: str, interval_minutes: int = 30) -> List[str]:
+    """Create time slots between start and end time"""
+    slots = []
+    
+    start_min = time_to_minutes(start_time)
+    end_min = time_to_minutes(end_time)
+    
+    current = start_min
+    while current < end_min:
+        slots.append(minutes_to_time(current))
+        current += interval_minutes
+    
+    return slots
+
+
+def dataframe_to_excel_bytes(df: pd.DataFrame) -> bytes:
+    """Convert DataFrame to Excel bytes"""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Jadwal')
+    output.seek(0)
+    return output.getvalue()
+
+
+def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    """Convert DataFrame to CSV bytes"""
+    return df.to_csv(index=False).encode('utf-8')
+
+
+def get_file_info(uploaded_file) -> Dict:
+    """Get file information"""
+    return {
+        'name': uploaded_file.name,
+        'size_kb': uploaded_file.size / 1024,
+        'type': uploaded_file.type,
+        'upload_time': datetime.now()
     }
-    return day_map.get(day_english, day_english)
 
-def format_time_display(time_str: str) -> str:
-    """Format time for display"""
-    if not time_str or pd.isna(time_str) or str(time_str).strip() in ['', '-', '[Reference]']:
-        return "-"
-    
-    time_str = str(time_str).strip()
-    return time_str
 
-def get_unique_values(df: pd.DataFrame, column: str):
-    """Get unique values from a column"""
-    if column in df.columns:
-        return sorted(df[column].dropna().unique().tolist())
-    return []
+def format_file_size(size_bytes: int) -> str:
+    """Format file size to human readable"""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.2f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.2f} TB"
 
-def validate_dataframe(df: pd.DataFrame):
-    """Validate DataFrame structure"""
-    errors = []
-    
-    if df.empty:
-        errors.append("DataFrame is empty")
-        return False, errors
-    
-    # Check for required columns
-    required_columns = ['doctor_name', 'specialty', 'day']
-    for col in required_columns:
-        if col not in df.columns:
-            errors.append(f"Missing column: {col}")
-    
-    return len(errors) == 0, errors
+
+def validate_excel_file(file) -> Tuple[bool, str]:
+    """Validate uploaded Excel file"""
+    try:
+        # Check file extension
+        if not file.name.lower().endswith(('.xlsx', '.xls')):
+            return False, "File harus berformat Excel (.xlsx atau .xls)"
+        
+        # Check file size (max 10MB)
+        if file.size > 10 * 1024 * 1024:
+            return False, "File terlalu besar (maksimal 10MB)"
+        
+        # Try to read the file
+        try:
+            df = pd.read_excel(file, nrows=5)
+            if df.empty:
+                return False, "File Excel kosong"
+        except Exception as e:
+            return False, f"Tidak bisa membaca file Excel: {str(e)}"
+        
+        return True, "File valid"
+    except Exception as e:
+        return False, f"Error validasi file: {str(e)}"
