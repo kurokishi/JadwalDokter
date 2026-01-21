@@ -1,12 +1,10 @@
 """
-Schedule tab UI component - SIMPLIFIED VERSION
+Schedule tab UI component
 """
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, time
-import numpy as np
 
 def convert_to_indonesian_day(day_english: str) -> str:
     """Convert English day name to Indonesian"""
@@ -75,15 +73,15 @@ def display_hafis_full_table(df: pd.DataFrame):
     
     with col1:
         specialties = ['All'] + sorted(df['specialty'].unique().tolist())
-        selected_specialty = st.selectbox("Filter Spesialisasi:", specialties)
+        selected_specialty = st.selectbox("Filter Spesialisasi:", specialties, key="spec_filter")
     
     with col2:
         days = ['All'] + sorted(df['day'].unique().tolist())
-        selected_day = st.selectbox("Filter Hari:", days)
+        selected_day = st.selectbox("Filter Hari:", days, key="day_filter")
     
     with col3:
         availability = ['All', 'Available', 'Not Available']
-        selected_availability = st.selectbox("Filter Ketersediaan:", availability)
+        selected_availability = st.selectbox("Filter Ketersediaan:", availability, key="avail_filter")
     
     # Apply filters
     filtered_df = df.copy()
@@ -136,7 +134,7 @@ def display_hafis_by_doctor(df: pd.DataFrame):
     
     # Doctor selector
     doctors = sorted(df['doctor_name'].unique().tolist())
-    selected_doctor = st.selectbox("Pilih Dokter:", doctors)
+    selected_doctor = st.selectbox("Pilih Dokter:", doctors, key="doctor_select")
     
     if selected_doctor:
         doctor_df = df[df['doctor_name'] == selected_doctor].copy()
@@ -180,7 +178,7 @@ def display_hafis_by_specialty(df: pd.DataFrame):
     
     # Specialty selector
     specialties = sorted(df['specialty'].unique().tolist())
-    selected_specialty = st.selectbox("Pilih Spesialisasi:", specialties)
+    selected_specialty = st.selectbox("Pilih Spesialisasi:", specialties, key="specialty_select")
     
     if selected_specialty:
         spec_df = df[df['specialty'] == selected_specialty].copy()
@@ -204,38 +202,35 @@ def display_hafis_by_specialty(df: pd.DataFrame):
         # Create pivot table view
         st.subheader("📊 Jadwal per Dokter")
         
-        # Create simplified pivot
-        pivot_data = []
+        # Get unique doctors
         doctors = sorted(spec_df['doctor_name'].unique())
+        
+        # Create table data
+        table_data = []
+        days_indonesia = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
         
         for doctor in doctors:
             doctor_data = spec_df[spec_df['doctor_name'] == doctor]
-            doctor_schedule = {}
+            row = {'Dokter': doctor}
             
             for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']:
                 day_schedule = doctor_data[doctor_data['day'] == day]
                 if not day_schedule.empty:
                     schedule = day_schedule.iloc[0]
-                    doctor_schedule[convert_to_indonesian_day(day)] = format_time_display(schedule['working_hours'])
+                    row[convert_to_indonesian_day(day)] = format_time_display(schedule['working_hours'])
                 else:
-                    doctor_schedule[convert_to_indonesian_day(day)] = "-"
+                    row[convert_to_indonesian_day(day)] = "-"
             
-            pivot_data.append({
-                'Dokter': doctor,
-                **doctor_schedule
-            })
+            table_data.append(row)
         
-        if pivot_data:
-            pivot_df = pd.DataFrame(pivot_data)
-            st.dataframe(pivot_df, use_container_width=True)
+        if table_data:
+            table_df = pd.DataFrame(table_data)
+            st.dataframe(table_df, use_container_width=True)
 
 def display_standard_schedule(df: pd.DataFrame):
     """Display schedule for standard format"""
     
     st.info("Standard schedule format detected.")
     
-    # Show available columns
-    st.write("Available columns:", list(df.columns))
-    
-    # Simple table view
+    # Show data
     st.dataframe(df, use_container_width=True)
