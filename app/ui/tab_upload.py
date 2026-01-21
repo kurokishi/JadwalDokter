@@ -1,11 +1,10 @@
 """
-Upload tab UI component
+Upload tab UI component - SIMPLIFIED
 """
 import streamlit as st
 import pandas as pd
 import tempfile
 import os
-from app.utils.parser import JadwalHafisParser
 from app.config import AppConfig
 
 def display_upload_tab():
@@ -14,66 +13,39 @@ def display_upload_tab():
     st.header("📤 Upload Data Jadwal Dokter")
     
     # File upload section
-    with st.container():
-        st.subheader("1. Unggah File")
+    uploaded_file = st.file_uploader(
+        "Pilih file Excel atau CSV",
+        type=AppConfig.ALLOWED_EXTENSIONS,
+        help="Format yang didukung: .xlsx, .xls, .csv"
+    )
+    
+    if uploaded_file is not None:
+        # Show file info
+        file_size = uploaded_file.size / 1024 / 1024  # Convert to MB
+        st.info(f"**File:** {uploaded_file.name} | **Size:** {file_size:.2f} MB")
         
-        uploaded_file = st.file_uploader(
-            "Pilih file Excel atau CSV",
-            type=AppConfig.ALLOWED_EXTENSIONS,
-            help="Format yang didukung: .xlsx, .xls, .csv. Ukuran maksimal: 50MB"
-        )
+        # Check if it's hafis format
+        is_hafis_format = 'hafis' in uploaded_file.name.lower()
         
-        if uploaded_file is not None:
-            # Show file info
-            file_size = uploaded_file.size / 1024 / 1024  # Convert to MB
-            st.info(f"**File:** {uploaded_file.name} | **Size:** {file_size:.2f} MB")
-            
-            # Check if it's hafis format
-            is_hafis_format = 'hafis' in uploaded_file.name.lower()
-            
-            if is_hafis_format:
-                st.success("🎯 **Format jadwal_hafis.xlsx terdeteksi!** Akan menggunakan parser khusus.")
-            
-            # Parse button
-            if st.button("🚀 Parse File", type="primary", use_container_width=True):
-                parse_uploaded_file(uploaded_file, is_hafis_format)
+        if is_hafis_format:
+            st.success("🎯 **Format jadwal_hafis.xlsx terdeteksi!**")
+        
+        # Parse button
+        if st.button("🚀 Parse File", type="primary", use_container_width=True):
+            parse_uploaded_file(uploaded_file, is_hafis_format)
     
     # Data preview section
     if 'data' in st.session_state and st.session_state.data_loaded:
         st.divider()
-        st.subheader("2. Preview Data")
+        st.subheader("📋 Preview Data")
         
         df = st.session_state.data
-        
-        # Show data info
         show_data_preview(df)
-        
-        # Data cleaning options (simplified)
-        with st.expander("🧹 Data Cleaning Options"):
-            if st.button("Clean Data"):
-                # Simple cleaning
-                if 'doctor_name' in df.columns:
-                    df['doctor_name'] = df['doctor_name'].astype(str).str.strip()
-                if 'specialty' in df.columns:
-                    df['specialty'] = df['specialty'].astype(str).str.strip()
-                
-                st.session_state.data = df
-                st.success("Data cleaned!")
-                st.rerun()
     
-    # Template download
+    # Sample data button
     st.divider()
-    st.subheader("3. Template & Examples")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("📥 Download Template", use_container_width=True):
-            create_template_download()
-    
-    with col2:
-        if st.button("🎲 Load Sample Data", use_container_width=True):
-            load_sample_data()
+    if st.button("🎲 Load Sample Data", use_container_width=True):
+        load_sample_data()
 
 def parse_uploaded_file(uploaded_file, is_hafis_format: bool = False):
     """Parse uploaded file based on format"""
@@ -87,11 +59,10 @@ def parse_uploaded_file(uploaded_file, is_hafis_format: bool = False):
             try:
                 if is_hafis_format:
                     # Use custom parser for hafis format
+                    from app.utils.parser import JadwalHafisParser
                     parser = JadwalHafisParser()
                     df = parser.parse_file(tmp_path)
                     
-                    # Set flag
-                    st.session_state.hafis_parsed = True
                     st.success("✅ File jadwal_hafis.xlsx berhasil diparsing!")
                     
                 else:
@@ -110,7 +81,6 @@ def parse_uploaded_file(uploaded_file, is_hafis_format: bool = False):
                 st.session_state.data = df
                 st.session_state.data_loaded = True
                 st.session_state.current_file = uploaded_file.name
-                st.session_state.uploaded_file = uploaded_file
                 
                 # Show success message
                 st.balloons()
@@ -122,12 +92,6 @@ def parse_uploaded_file(uploaded_file, is_hafis_format: bool = False):
                 
     except Exception as e:
         st.error(f"❌ Error parsing file: {str(e)}")
-        st.info("""
-        **Tips:**
-        1. Pastikan file tidak sedang dibuka di program lain
-        2. Untuk file Excel, pastikan format sesuai
-        3. Untuk file jadwal_hafis.xlsx, pastikan struktur sesuai dengan contoh
-        """)
 
 def show_data_preview(df: pd.DataFrame):
     """Show data preview with statistics"""
@@ -149,9 +113,7 @@ def show_data_preview(df: pd.DataFrame):
     
     # Data preview
     st.write("**Data Preview:**")
-    
-    # Show first 50 rows
-    st.dataframe(df.head(50), use_container_width=True)
+    st.dataframe(df.head(20), use_container_width=True)
     
     # Column information
     with st.expander("📋 Column Information"):
@@ -159,42 +121,9 @@ def show_data_preview(df: pd.DataFrame):
             'Column': df.columns,
             'Data Type': df.dtypes.astype(str),
             'Non-Null Count': df.notna().sum(),
-            'Null Count': df.isna().sum(),
-            'Unique Values': [df[col].nunique() for col in df.columns]
+            'Null Count': df.isna().sum()
         })
         st.dataframe(col_info, use_container_width=True)
-
-def create_template_download():
-    """Create and download template file"""
-    try:
-        # Create template DataFrame
-        template_data = {
-            'doctor_name': ['Dr. John Doe', 'Dr. Jane Smith'],
-            'specialty': ['Cardiology', 'Pediatrics'],
-            'department': ['Cardiology', 'Pediatrics'],
-            'day': ['Monday', 'Tuesday'],
-            'working_hours': ['08:00-16:00', '09:00-17:00'],
-            'regular_schedule': ['08:00-12:00', '09:00-13:00'],
-            'executive_schedule': ['14:00-16:00', '14:00-17:00'],
-            'available': [1, 1]
-        }
-        
-        template_df = pd.DataFrame(template_data)
-        
-        # Convert to CSV
-        csv = template_df.to_csv(index=False)
-        
-        # Download button
-        st.download_button(
-            label="📥 Download Template CSV",
-            data=csv,
-            file_name="jadwal_dokter_template.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-        
-    except Exception as e:
-        st.error(f"Error creating template: {str(e)}")
 
 def load_sample_data():
     """Load sample data for demonstration"""
