@@ -1,109 +1,156 @@
 """
-Main Streamlit App for Jadwal Dokter
+Main Streamlit application for Jadwal Dokter Converter
 """
 import streamlit as st
-import pandas as pd
 import sys
 import os
+from datetime import datetime
 
-# Add app to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# Add the app directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+if project_dir not in sys.path:
+    sys.path.insert(0, project_dir)
 
+from app.ui.home import show_home
+from app.ui.upload_converter import show_upload_converter
+from app.ui.schedule_viewer import show_schedule_viewer
+from app.ui.export_manager import show_export_manager
+from app.ui.about import show_about
+from app.utils import init_session_state
 from app.config import AppConfig
 
-def init_session_state():
-    """Initialize session state variables"""
-    if 'data' not in st.session_state:
-        st.session_state.data = None
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
-    if 'current_file' not in st.session_state:
-        st.session_state.current_file = None
 
-def setup_page():
-    """Configure Streamlit page settings"""
+def main():
+    """Main application entry point"""
+    
+    # Page configuration - NO EMOJI in page_title to avoid encoding issues
     st.set_page_config(
-        page_title=AppConfig.PAGE_TITLE,
-        page_icon=AppConfig.PAGE_ICON,
-        layout=AppConfig.LAYOUT,
-        initial_sidebar_state="expanded"
+        page_title="Jadwal Dokter Converter",
+        page_icon="🏥",
+        layout="wide",
+        initial_sidebar_state="expanded",
+        menu_items={
+            'Get Help': 'https://github.com/your-repo/jadwal-dokter',
+            'Report a bug': 'https://github.com/your-repo/jadwal-dokter/issues',
+            'About': f"Jadwal Dokter Converter v{AppConfig().VERSION}"
+        }
     )
     
     # Custom CSS
     st.markdown("""
     <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1E88E5;
-        text-align: center;
-        margin-bottom: 1rem;
+    /* Main styling */
+    .main {
+        padding: 0 1rem;
     }
-    .sub-header {
-        font-size: 1.5rem;
-        color: #666;
-        text-align: center;
-        margin-bottom: 2rem;
+    
+    /* Header styling */
+    .st-emotion-cache-1y4p8pa {
+        padding-top: 1rem;
     }
+    
+    /* Button styling */
+    .stButton > button {
+        border-radius: 8px;
+        font-weight: 500;
+    }
+    
+    /* Dataframe styling */
+    .stDataFrame {
+        border-radius: 8px;
+        border: 1px solid #e5e7eb;
+    }
+    
+    /* Metric card styling */
+    .stMetric {
+        background-color: #f9fafb;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #e5e7eb;
+    }
+    
+    /* Sidebar styling */
+    .st-emotion-cache-16txtl3 {
+        padding: 2rem 1rem;
+    }
+    
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
-
-def main():
-    """Main application function"""
-    # Setup
-    setup_page()
+    
+    # Initialize session state
     init_session_state()
     
-    # Header
-    st.markdown(f"<h1 class='main-header'>{AppConfig.APP_NAME}</h1>", unsafe_allow_html=True)
-    st.markdown(f"<p class='sub-header'>Versi {AppConfig.APP_VERSION}</p>", unsafe_allow_html=True)
+    # Initialize navigation state
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = 'home'
     
-    # Sidebar
+    # Sidebar navigation
     with st.sidebar:
-        #st.image("🏥", width=100)
-        st.title("Navigasi")
+        st.title("🏥 Jadwal Dokter")
+        st.markdown(f"*v{AppConfig().VERSION}*")
         
-        # File info
-        if st.session_state.data_loaded:
-            st.success(f"✅ File Loaded: {st.session_state.current_file}")
+        st.markdown("---")
         
-        # Navigation
-        menu_options = ["🏠 Home", "📤 Upload Data", "📅 Jadwal Dokter", "🧩 Kanban Drag", "ℹ️ About"]
-        selected_menu = st.radio("Menu:", menu_options)
+        # Navigation menu
+        menu_items = {
+            "🏠 Home": "home",
+            "🔄 Upload & Konversi": "upload",
+            "📅 View Jadwal": "view",
+            "💾 Export Data": "export",
+            "ℹ️ Tentang": "about"
+        }
+        
+        selected = st.selectbox(
+            "Navigasi",
+            options=list(menu_items.keys()),
+            index=list(menu_items.values()).index(st.session_state.current_page) 
+            if st.session_state.current_page in menu_items.values() else 0
+        )
+        
+        # Update current page based on selection
+        if selected in menu_items:
+            st.session_state.current_page = menu_items[selected]
+        
+        st.markdown("---")
+        
+        # Quick stats if data exists
+        if st.session_state.get('grid_data') is not None:
+            grid_df = st.session_state.grid_data
+            st.markdown("**📊 Quick Stats:**")
+            st.markdown(f"• Jadwal: {len(grid_df)}")
+            st.markdown(f"• Dokter: {grid_df['DOKTER'].nunique()}")
+            st.markdown(f"• Poli: {grid_df['POLI'].nunique()}")
+        
+        # Footer in sidebar
+        st.markdown("---")
+        st.markdown(f"""
+        <div style='text-align: center; color: #6b7280; font-size: 0.8rem;'>
+        <p>© 2024 Jadwal Dokter</p>
+        <p>{datetime.now().strftime('%d %B %Y')}</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Import UI components based on selection
-    try:
-        if selected_menu == "🏠 Home":
-            from app.ui.home import display_home_tab
-            display_home_tab()
-        
-        elif selected_menu == "📤 Upload Data":
-            from app.ui.tab_upload import display_upload_tab
-            display_upload_tab()
-        
-        elif selected_menu == "📅 Jadwal Dokter":
-            if st.session_state.data_loaded:
-                from app.ui.tab_schedule import display_schedule_tab
-                display_schedule_tab()
-            else:
-                st.warning("⚠️ Silakan upload data terlebih dahulu di tab 'Upload Data'")
-        
-        elif selected_menu == "🧩 Kanban Drag":
-            if st.session_state.data_loaded:
-                from app.ui.tab_kanban_drag import display_kanban_tab
-                display_kanban_tab()
-            else:
-                st.warning("⚠️ Silakan upload data terlebih dahulu di tab 'Upload Data'")
-        
-        elif selected_menu == "ℹ️ About":
-            from app.ui.tab_about import display_about_tab
-            display_about_tab()
+    # Main content area
+    st.container()
     
-    except Exception as e:
-        st.error(f"Error loading tab: {str(e)}")
-    
-    # Footer
-    st.divider()
-    st.caption(f"© 2024 {AppConfig.APP_NAME}")
+    # Page routing based on current_page
+    if st.session_state.current_page == 'home':
+        show_home()
+    elif st.session_state.current_page == 'upload':
+        show_upload_converter()
+    elif st.session_state.current_page == 'view':
+        show_schedule_viewer()
+    elif st.session_state.current_page == 'export':
+        show_export_manager()
+    elif st.session_state.current_page == 'about':
+        show_about()
+    else:
+        show_home()
+
 
 if __name__ == "__main__":
     main()
