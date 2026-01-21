@@ -1,107 +1,178 @@
 """
-Konversi data parsed ke format grid seperti jadwal_hasil.xlsx
+Convert parsed data to grid format like jadwal_hasil.xlsx
 """
 import pandas as pd
-from datetime import time
-from typing import Dict, List
-from .hafis_parser import HafisParser
+import numpy as np
+from typing import Dict, List, Any
+from app.config import AppConfig
+from app.utils import parse_time_string, time_to_minutes, minutes_to_time
 
 
 class GridConverter:
-    """
-    Konversi data dari HafisParser ke format grid
-    """
+    """Convert to grid format"""
     
     def __init__(self):
-        self.time_slots = self._generate_time_slots()
-        
-    def _generate_time_slots(self):
-        """Generate time slots dari 07:00 sampai 14:00 dengan interval 30 menit"""
-        slots = []
-        for hour in range(7, 15):  # 07:00 sampai 14:00
-            for minute in [0, 30]:
-                if hour == 14 and minute == 30:  # Stop at 14:30
-                    break
-                time_str = f"{hour:02d}:{minute:02d}"
-                slots.append(time_str)
-        return slots
+        self.config = AppConfig()
+        self.time_slots = self.config.DEFAULT_TIME_SLOTS
     
-    def convert_to_grid(self, schedules: List[Dict]) -> pd.DataFrame:
+    def convert_to_grid(self, schedules: List[Dict[str, Any]]) -> pd.DataFrame:
         """
         Convert parsed schedules to grid format
         
+        Args:
+            schedules: List of parsed schedule items
+            
         Returns:
-            DataFrame dengan format seperti jadwal_hasil.xlsx
+            DataFrame in grid format
         """
-        rows = []
+        grid_rows = []
         
-        for schedule in schedules:
-            if schedule['Waktu']['type'] != 'time_range':
-                continue
-                
-            # Create base row
-            row = {
-                'POLI': schedule['POLI'],
-                'JENIS': schedule['Jenis'],
-                'HARI': schedule['Hari'],
-                'DOKTER': schedule['DOKTER'],
-                'JAM': f"{schedule['Waktu']['start_str']}-{schedule['Waktu']['end_str']}",
-            }
+        # Group by key combinations
+        grouped = self._group_schedules(schedules)
+        
+        for key, schedule_group in grouped.items():
+            # Extract base information
+            poli, dokter, hari, jenis = key
             
-            # Add time slots
-            start_min = schedule['Waktu']['start']
-            end_min = schedule['Waktu']['end']
+            # Get all time ranges for this combination
+            time_ranges = self._extract_time_ranges(schedule_group, jenis)
             
-            for slot in self.time_slots:
-                slot_hour, slot_minute = map(int, slot.split(':'))
-                slot_minutes = slot_hour * 60 + slot_minute
-                
-                # Check if slot is within the time range
-                if start_min <= slot_minutes < end_min:
-                    row[slot] = 'R' if schedule['Jenis'] == 'Reguler' else 'E'
-                else:
-                    row[slot] = ''
-            
-            rows.append(row)
+            if time_ranges:
+                # Create grid row
+                grid_row = self._create_grid_row(
+                    poli, dokter, hari, jenis, time_ranges
+                )
+                grid_rows.append(grid_row)
         
         # Create DataFrame
-        columns = ['POLI', 'JENIS', 'HARI', 'DOKTER', 'JAM'] + self.time_slots
-        df = pd.DataFrame(rows, columns=columns)
-        
-        # Sort the DataFrame
-        df = df.sort_values(['POLI', 'DOKTER', 'HARI', 'JENIS'])
-        
-        return df
+        if grid_rows:
+            df = pd.DataFrame(grid_rows)
+            
+            # Reorder columns
+            base_cols = ['POLI', 'JENIS', 'HARI', 'DOKTER', 'JAM']
+            time_cols = [col for col in df.columns if col not in base_cols]
+            
+            # Sort columns
+            df = df[base_cols + sorted(time_cols)]
+            
+            # Sort rows
+            df = df.sort_values(['POLI', 'DOKTER', 'HARI', 'JENIS'])
+            
+            return df
+        else:
+            return pd.DataFrame()
     
-    def fill_time_slots_from_range(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Fill time slots based on JAM column
-        """
-        for idx, row in df.iterrows():
-            if pd.isna(row['JAM']) or row['JAM'] == '':
-                continue
-                
-            # Parse time range from JAM column
-            try:
-                time_range = str(row['JAM'])
-                if '-' in time_range:
-                    start_str, end_str = time_range.split('-')
-                    
-                    # Convert to minutes
-                    start_hour, start_minute = map(int, start_str.strip().split(':'))
-                    end_hour, end_minute = map(int, end_str.strip().split(':'))
-                    
-                    start_minutes = start_hour * 60 + start_minute
-                    end_minutes = end_hour * 60 + end_minute
-                    
-                    # Fill slots
-                    for slot in self.time_slots:
-                        slot_hour, slot_minute = map(int, slot.split(':'))
-                        slot_minutes = slot_hour * 60 + slot_minute
-                        
-                        if start_minutes <= slot_minutes < end_minutes:
-                            df.at[idx, slot] = 'R' if row['JENIS'] == 'Reguler' else 'E'
-            except:
-                continue
+    def _group_schedules(self, schedules: List[Dict]) -> Dict:
+        """Group schedules by key combination"""
+        groups = {}
         
-        return df
+        for schedule in schedules:
+            # Only process REGULER and EKSEKUTIF types
+            if schedule['Tipe'] not in ['REGULER', 'EKSEKUTIF']:
+                continue
+            
+            poli = schedule.get('POLI', '')
+            dokter = schedule.get('Dokter', '')
+            hari = schedule.get('Hari', '')
+            
+            # Map schedule type to JENIS
+            if schedule['Tipe'] == 'REGULER':
+                jenis = 'Reguler'
+            else:  # EKSEKUTIF
+                jenis = 'Eksekutif'
+            
+            key = (poli, dokter, hari, jenis)
+            
+            if key not in groups:
+                groups[key] = []
+            
+            groups[key].append(schedule)
+        
+        return groups
+    
+    def _extract_time_ranges(self, schedules: List[Dict], jenis: str) -> List[Dict]:
+        """Extract time ranges from schedules"""
+        time_ranges = []
+        
+        for schedule in schedules:
+            parsed = schedule.get('Parsed', {})
+            
+            if parsed.get('type') == 'range':
+                time_range = {
+                    'start': parsed['start'],
+                    'end': parsed['end'],
+                    'jenis': jenis
+                }
+                time_ranges.append(time_range)
+            elif parsed.get('type') == 'single':
+                # Convert single time to 30-minute range
+                single_time = parsed['time']
+                time_range = {
+                    'start': single_time,
+                    'end': self._add_minutes(single_time, 30),
+                    'jenis': jenis
+                }
+                time_ranges.append(time_range)
+        
+        return time_ranges
+    
+    def _add_minutes(self, time_str: str, minutes: int) -> str:
+        """Add minutes to time string"""
+        hour, minute = map(int, time_str.split(':'))
+        
+        total_minutes = hour * 60 + minute + minutes
+        
+        new_hour = total_minutes // 60
+        new_minute = total_minutes % 60
+        
+        return f"{new_hour:02d}:{new_minute:02d}"
+    
+    def _create_grid_row(self, poli: str, dokter: str, hari: str, 
+                        jenis: str, time_ranges: List[Dict]) -> Dict:
+        """Create a single grid row"""
+        # Start with base columns
+        row = {
+            'POLI': poli,
+            'JENIS': jenis,
+            'HARI': hari,
+            'DOKTER': dokter
+        }
+        
+        # Combine time ranges for JAM column
+        jam_strings = []
+        for tr in time_ranges:
+            jam_strings.append(f"{tr['start']}-{tr['end']}")
+        
+        row['JAM'] = ', '.join(jam_strings)
+        
+        # Initialize all time slots as empty
+        for slot in self.time_slots:
+            row[slot] = ''
+        
+        # Fill time slots based on time ranges
+        for time_range in time_ranges:
+            start_min = time_to_minutes(time_range['start'])
+            end_min = time_to_minutes(time_range['end'])
+            
+            for slot in self.time_slots:
+                slot_min = time_to_minutes(slot)
+                
+                if start_min <= slot_min < end_min:
+                    # Use R for Reguler, E for Eksekutif
+                    row[slot] = 'R' if jenis == 'Reguler' else 'E'
+        
+        return row
+    
+    def get_grid_summary(self, grid_df: pd.DataFrame) -> Dict[str, Any]:
+        """Get summary statistics for grid data"""
+        if grid_df.empty:
+            return {}
+        
+        return {
+            'total_rows': len(grid_df),
+            'total_doctors': grid_df['DOKTER'].nunique(),
+            'total_poli': grid_df['POLI'].nunique(),
+            'reguler_count': len(grid_df[grid_df['JENIS'] == 'Reguler']),
+            'eksekutif_count': len(grid_df[grid_df['JENIS'] == 'Eksekutif']),
+            'days_distribution': grid_df['HARI'].value_counts().to_dict()
+        }
