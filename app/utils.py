@@ -4,25 +4,121 @@ Utility functions for Jadwal Dokter Converter
 import streamlit as st
 import pandas as pd
 import re
+import numpy as np
 from datetime import datetime, time
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Any
 import io
 
 
 def init_session_state():
     """Initialize session state variables"""
-    if 'grid_data' not in st.session_state:
-        st.session_state.grid_data = None
-    if 'original_data' not in st.session_state:
-        st.session_state.original_data = None
-    if 'file_name' not in st.session_state:
-        st.session_state.file_name = None
-    if 'parsed_data' not in st.session_state:
-        st.session_state.parsed_data = None
-    if 'conversion_stats' not in st.session_state:
-        st.session_state.conversion_stats = {}
-    if 'export_data' not in st.session_state:
-        st.session_state.export_data = None
+    default_states = {
+        'grid_data': None,
+        'original_data': None,
+        'file_name': None,
+        'parsed_data': None,
+        'conversion_stats': {},
+        'export_data': None,
+        'current_page': 'home',
+        'validation_results': None,
+        'upload_time': None
+    }
+    
+    for key, value in default_states.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def clean_dataframe(df: pd.DataFrame, fill_empty: str = '') -> pd.DataFrame:
+    """
+    Clean DataFrame by handling missing values and type conversions
+    
+    Args:
+        df: DataFrame to clean
+        fill_empty: Value to fill empty cells with (default: '')
+    
+    Returns:
+        Cleaned DataFrame
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    # Create a copy to avoid modifying original
+    df_clean = df.copy()
+    
+    # Fill NaN with specified value
+    df_clean = df_clean.fillna(fill_empty)
+    
+    # Convert all object columns to string and strip whitespace
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
+            # Replace None with empty string before string conversion
+            df_clean[col] = df_clean[col].apply(
+                lambda x: '' if x is None else str(x).strip()
+            )
+    
+    # Remove rows where all values are empty
+    df_clean = df_clean[~df_clean.apply(lambda row: all(v == fill_empty for v in row), axis=1)]
+    
+    return df_clean
+
+
+def safe_sort(values: List[Any]) -> List[str]:
+    """
+    Safely sort a list that may contain None or mixed types
+    
+    Args:
+        values: List of values to sort
+        
+    Returns:
+        Sorted list of strings
+    """
+    if not values:
+        return []
+    
+    # Filter out None and convert to string
+    str_values = []
+    for v in values:
+        if v is not None and pd.notna(v):
+            str_val = str(v).strip()
+            if str_val:  # Only add non-empty strings
+                str_values.append(str_val)
+    
+    # Remove duplicates and sort
+    unique_values = list(set(str_values))
+    return sorted(unique_values)
+
+
+def get_unique_sorted(values: pd.Series, include_all: bool = True) -> List[str]:
+    """
+    Get unique sorted values from a pandas Series
+    
+    Args:
+        values: pandas Series
+        include_all: Whether to include 'Semua' option
+        
+    Returns:
+        List of sorted unique values
+    """
+    # Clean the series
+    cleaned = values.dropna()
+    cleaned = cleaned[cleaned.notnull()]
+    cleaned = cleaned.astype(str).str.strip()
+    cleaned = cleaned[cleaned != '']
+    
+    # Get unique values
+    unique_vals = cleaned.unique().tolist()
+    
+    # Sort
+    sorted_vals = sorted(unique_vals)
+    
+    # Add 'Semua' option if requested
+    if include_all and sorted_vals:
+        return ['Semua'] + sorted_vals
+    elif sorted_vals:
+        return sorted_vals
+    else:
+        return ['Semua'] if include_all else []
 
 
 def parse_time_string(time_str: str) -> Optional[Tuple[str, str]]:
@@ -84,7 +180,10 @@ def is_valid_time(time_str: str) -> bool:
 def time_to_minutes(time_str: str) -> int:
     """Convert time string to minutes since midnight"""
     try:
-        hour, minute = map(int, time_str.split(':'))
+        if pd.isna(time_str) or not time_str:
+            return 0
+            
+        hour, minute = map(int, str(time_str).split(':'))
         return hour * 60 + minute
     except:
         return 0
@@ -167,3 +266,25 @@ def validate_excel_file(file) -> Tuple[bool, str]:
         return True, "File valid"
     except Exception as e:
         return False, f"Error validasi file: {str(e)}"
+
+
+def format_datetime(dt: datetime) -> str:
+    """Format datetime to readable string"""
+    return dt.strftime("%d %B %Y %H:%M:%S")
+
+
+def log_error(error: Exception, context: str = ""):
+    """Log error with context"""
+    error_msg = f"Error in {context}: {str(error)}" if context else f"Error: {str(error)}"
+    print(f"❌ {error_msg}")
+    
+    # Also log to Streamlit session state for debugging
+    if 'error_log' not in st.session_state:
+        st.session_state.error_log = []
+    
+    st.session_state.error_log.append({
+        'timestamp': datetime.now(),
+        'context': context,
+        'error': str(error),
+        'type': type(error).__name__
+    })
