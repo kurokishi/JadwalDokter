@@ -1,5 +1,5 @@
 """
-Upload tab UI component - SIMPLIFIED
+Upload tab UI component
 """
 import streamlit as st
 import pandas as pd
@@ -59,7 +59,7 @@ def parse_uploaded_file(uploaded_file, is_hafis_format: bool = False):
             try:
                 if is_hafis_format:
                     # Use custom parser for hafis format
-                    from app.utils.parser import JadwalHafisParser
+                    from app.parser import JadwalHafisParser  # ✅ IMPORT DARI app.parser
                     parser = JadwalHafisParser()
                     df = parser.parse_file(tmp_path)
                     
