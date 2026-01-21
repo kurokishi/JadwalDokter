@@ -59,7 +59,7 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        st.image("🏥", width=100)
+        #st.image("🏥", width=100)
         st.title("Navigasi")
         
         # File info
